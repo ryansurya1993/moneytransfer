@@ -1,0 +1,42 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  # errcheck, govet, ineffassign, staticcheck, unused
+  default: standard
+  enable:
+    - bodyclose      # HTTP response bodies are closed
+    - depguard       # architecture boundary, see rules below
+    - errorlint      # errors compared with errors.Is / errors.As, wrapped with %w
+    - gosec          # common security issues
+    - misspell
+    - noctx          # outbound HTTP and SQL calls carry a context
+    - rowserrcheck   # rows.Err() is checked
+    - sqlclosecheck  # rows and statements are closed
+
+  settings:
+    depguard:
+      rules:
+        # The core must not depend on infrastructure.
+        core:
+          list-mode: lax
+          files:
+            - "**/internal/transfer/**"
+          deny:
+            - pkg: net/http
+              desc: "HTTP belongs in an adapter"
+            - pkg: database/sql
+              desc: "database access belongs in an adapter"
+            - pkg: github.com/ryansurya1993/moneytransfer/internal/adapter
+              desc: "adapters depend on the core, never the other way round"
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/ryansurya1993/moneytransfer

@@ -1,0 +1,7 @@
+# Local environment overrides
+.env
+
+# Build output and test artifacts
+/bin/
+*.out
+coverage.*
