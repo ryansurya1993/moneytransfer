@@ -1,0 +1,54 @@
+name: moneytransfer
+
+x-db-env: &db-env
+  POSTGRES_USER: ${POSTGRES_USER:-moneytransfer}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-moneytransfer}
+  POSTGRES_DB: ${POSTGRES_DB:-moneytransfer}
+
+services:
+  postgres:
+    image: postgres:18.7-alpine
+    environment: *db-env
+    volumes:
+      # Postgres 18 images keep data under a version subdirectory of this path.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  migrate:
+    image: migrate/migrate:v4.20.1
+    volumes:
+      - ./migrations:/migrations:ro
+    command:
+      - -path=/migrations
+      - -database=postgres://${POSTGRES_USER:-moneytransfer}:${POSTGRES_PASSWORD:-moneytransfer}@postgres:5432/${POSTGRES_DB:-moneytransfer}?sslmode=disable
+      - up
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  seed:
+    image: postgres:18.7-alpine
+    environment:
+      <<: *db-env
+      PGPASSWORD: ${POSTGRES_PASSWORD:-moneytransfer}
+    volumes:
+      - ./deploy/seed/seed.sql:/seed.sql:ro
+    command:
+      - psql
+      - --host=postgres
+      - --username=${POSTGRES_USER:-moneytransfer}
+      - --dbname=${POSTGRES_DB:-moneytransfer}
+      - --set=ON_ERROR_STOP=1
+      - --set=initial_balance=${INITIAL_BALANCE:-1000000000}
+      - --file=/seed.sql
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:

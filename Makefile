@@ -8,10 +8,16 @@ export MSYS_NO_PATHCONV := 1
 
 DOCKER_RUN = docker run --rm -v "$(CURDIR)":/src -w /src
 
-.PHONY: help build vet test test-race lint fmt
+.PHONY: help up down build vet test test-race lint fmt
 
 help: ## Show this help
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  %-18s %s\n", $$1, $$2}'
+
+up: ## Start the stack (migrations and seed run automatically)
+	docker compose up -d
+
+down: ## Stop the stack and keep the data
+	docker compose down
 
 build: ## Compile all packages
 	go build ./...

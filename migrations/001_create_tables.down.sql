@@ -1,0 +1,4 @@
+DROP TABLE IF EXISTS outbox;
+DROP TABLE IF EXISTS balance_entries;
+DROP TABLE IF EXISTS transfers;
+DROP TABLE IF EXISTS merchants;
