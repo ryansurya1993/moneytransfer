@@ -2,6 +2,8 @@ version: "2"
 
 run:
   timeout: 5m
+  build-tags:
+    - integration
 
 linters:
   # errcheck, govet, ineffassign, staticcheck, unused
@@ -29,8 +31,16 @@ linters:
               desc: "HTTP belongs in an adapter"
             - pkg: database/sql
               desc: "database access belongs in an adapter"
+            - pkg: github.com/jmoiron/sqlx
+              desc: "database access belongs in an adapter"
+            - pkg: github.com/jackc/pgx
+              desc: "database access belongs in an adapter"
             - pkg: github.com/ryansurya1993/moneytransfer/internal/adapter
               desc: "adapters depend on the core, never the other way round"
+
+    rowserrcheck:
+      packages:
+        - github.com/jmoiron/sqlx
 
 formatters:
   enable:

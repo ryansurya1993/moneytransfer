@@ -8,7 +8,7 @@ export MSYS_NO_PATHCONV := 1
 
 DOCKER_RUN = docker run --rm -v "$(CURDIR)":/src -w /src
 
-.PHONY: help up down build vet test test-race lint fmt
+.PHONY: help up down build vet test test-integration test-race lint fmt
 
 help: ## Show this help
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  %-18s %s\n", $$1, $$2}'
@@ -27,6 +27,9 @@ vet: ## Run go vet
 
 test: ## Run unit tests
 	go test ./...
+
+test-integration: ## Run integration tests against real Postgres (needs Docker)
+	go test -tags=integration ./...
 
 test-race: ## Run unit tests with the race detector (in Docker, needs cgo)
 	$(DOCKER_RUN) -v gomodcache:/go/pkg/mod $(GO_IMAGE) go test -race ./...
