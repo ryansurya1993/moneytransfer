@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"runtime/debug"
 	"time"
@@ -45,7 +46,12 @@ func (h *handler) withAccessLog(next http.Handler) http.Handler {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(sw, r)
-		h.logger.InfoContext(r.Context(), "http request",
+		level := slog.LevelInfo
+		// The container healthcheck calls /healthz every few seconds; only a failed probe is news.
+		if r.URL.Path == "/healthz" && sw.status == http.StatusOK {
+			level = slog.LevelDebug
+		}
+		h.logger.Log(r.Context(), level, "http request",
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", sw.status,

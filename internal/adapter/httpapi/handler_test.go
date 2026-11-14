@@ -497,6 +497,35 @@ func TestHealth(t *testing.T) {
 	}
 }
 
+func TestAccessLogLevel(t *testing.T) {
+	tests := []struct {
+		name    string
+		method  string
+		path    string
+		level   slog.Level
+		wantLog bool
+	}{
+		{name: "healthy probe hidden at info", method: http.MethodGet, path: "/healthz", level: slog.LevelInfo, wantLog: false},
+		{name: "healthy probe shown at debug", method: http.MethodGet, path: "/healthz", level: slog.LevelDebug, wantLog: true},
+		{name: "rejected probe shown", method: http.MethodPost, path: "/healthz", level: slog.LevelInfo, wantLog: true},
+		{name: "readiness shown", method: http.MethodGet, path: "/readyz", level: slog.LevelInfo, wantLog: true},
+		{name: "transfer shown", method: http.MethodGet, path: "/transfer/" + sample.ID.String(), level: slog.LevelInfo, wantLog: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logs := &bytes.Buffer{}
+			logger := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: tt.level}))
+			h := httpapi.NewHandler(&fakeService{getResult: sample}, fakePinger{}, logger, httpapi.Options{MerchantID: 1, DBTimeout: time.Second})
+
+			h.ServeHTTP(httptest.NewRecorder(), newRequest(t, tt.method, tt.path, nil))
+
+			if got := strings.Contains(logs.String(), `"msg":"http request"`); got != tt.wantLog {
+				t.Errorf("access log written = %v, want %v; logs: %s", got, tt.wantLog, logs)
+			}
+		})
+	}
+}
+
 func TestGetFailedTransferShowsFailureCode(t *testing.T) {
 	failed := sample
 	failed.Status = transfer.StatusFailed
