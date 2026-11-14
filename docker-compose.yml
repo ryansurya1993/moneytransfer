@@ -61,7 +61,6 @@ services:
       DB_CONN_MAX_LIFETIME: ${DB_CONN_MAX_LIFETIME:-}
       DB_IDLE_IN_TRANSACTION_TIMEOUT: ${DB_IDLE_IN_TRANSACTION_TIMEOUT:-}
       DB_TIMEOUT: ${DB_TIMEOUT:-}
-      HTTP_PORT: ${HTTP_PORT:-}
       HTTP_READ_HEADER_TIMEOUT: ${HTTP_READ_HEADER_TIMEOUT:-}
       HTTP_READ_TIMEOUT: ${HTTP_READ_TIMEOUT:-}
       HTTP_WRITE_TIMEOUT: ${HTTP_WRITE_TIMEOUT:-}
@@ -70,8 +69,9 @@ services:
       MAX_TRANSFER_AMOUNT: ${MAX_TRANSFER_AMOUNT:-}
       MERCHANT_ID: ${MERCHANT_ID:-}
       LOG_LEVEL: ${LOG_LEVEL:-}
-    ports:
-      - "${API_PORT:-18080}:${HTTP_PORT:-8080}"
+    # Two replicas show that the balance guard holds across processes.
+    deploy:
+      replicas: 2
     healthcheck:
       # The distroless image has no curl, so the binary probes itself.
       test: ["CMD", "/usr/local/bin/api", "healthcheck"]
@@ -86,6 +86,26 @@ services:
     restart: unless-stopped
     # Longer than HTTP_SHUTDOWN_TIMEOUT, so in-flight requests can finish before Docker kills the process.
     stop_grace_period: 15s
+
+  # The only way into the api from the host. Spreads requests over the api replicas.
+  haproxy:
+    image: haproxy:3.4.7-alpine
+    ports:
+      - "${API_PORT:-18080}:8080"
+    volumes:
+      - ./deploy/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    healthcheck:
+      # Healthy once HAProxy can reach at least one api replica.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+      start_interval: 1s
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
 
   rabbitmq:
     image: rabbitmq:4.3.7-management-alpine
@@ -193,7 +213,7 @@ services:
       LOADTEST_MAX_AMOUNT: ${LOADTEST_MAX_AMOUNT:-}
       MERCHANT_ID: ${MERCHANT_ID:-}
     depends_on:
-      api:
+      haproxy:
         condition: service_healthy
       relay:
         condition: service_started

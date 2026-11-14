@@ -13,7 +13,7 @@ What it guarantees:
 - A failed transfer is refunded exactly once, and only when the provider says it failed.
 - The balance always equals the sum of its ledger entries.
 
-Stack: Go 1.26, PostgreSQL 18, RabbitMQ 4.3 (quorum queues), Docker Compose.
+Stack: Go 1.26, PostgreSQL 18, RabbitMQ 4.3 (quorum queues), HAProxy 3.4, Docker Compose.
 
 ## Important notes
 
@@ -59,7 +59,8 @@ starts Postgres, RabbitMQ and the services, runs the migrations, and seeds merch
 
 | Service | What it does | Host port |
 |---|---|---|
-| `api` | HTTP API: validates, deducts the balance, stores the transfer | `18080` |
+| `haproxy` | Spreads requests over the api replicas | `18080` |
+| `api` (2 replicas) | HTTP API: validates, deducts the balance, stores the transfer | - |
 | `relay` | Publishes stored events to RabbitMQ | - |
 | `worker` | Calls the provider, records the outcome, refunds failures | - |
 | `mockprovider` | Fake bank with random delays and outcomes | - |
@@ -227,6 +228,8 @@ What it sends, for 30 seconds:
 - About 10% duplicate keys: half are later retries, half are sent twice at the same moment.
 - About 5% accounts ending in `0001`-`0004`.
 
+The requests go through HAProxy, so both api replicas deduct from the same balance at the same time.
+
 Then it waits until none of its transfers is `PENDING` or `PROCESSING` and checks Postgres:
 
 1. Every transfer finished.
@@ -238,28 +241,28 @@ Then it waits until none of its transfers is `PENDING` or `PROCESSING` and check
 A run on a laptop with 3 workers:
 
 ```
-Load test 20261114T054042Z-b5fa
-  target     http://api:8080, 20 requests/s for 30s, at most 20 in flight
-  balance    1003091186 at the start, amounts 50000-5000000
+Load test 20261114T073147Z-1762
+  target     http://haproxy:8080, 20 requests/s for 30s, at most 20 in flight
+  balance    1000033983 at the start, amounts 50000-5000000
 
 Traffic
-  requests   626 sent, 0 skipped (no free slot), 20.9/s
+  requests   633 sent, 0 skipped (no free slot), 21.1/s
   latency    p50 5ms, p95 8ms, p99 11ms
-  202 new    462
-  202 replay 57
-  422        107
+  202 new    460
+  202 replay 49
+  422        124
   no answer  0
 
-Transfers created: 462 (waited 1s for their outcomes after sending)
-  SUCCESS     399  amount 971502196
-  FAILED       50  amount 139963469
-  UNKNOWN      13  amount 31493032
+Transfers created: 460 (waited 1s for their outcomes after sending)
+  SUCCESS     392  amount 977643686
+  FAILED       58  amount 139653119
+  UNKNOWN      10  amount 22154613
 
 Checks
   PASS  all transfers finished: none left PENDING or PROCESSING
-  PASS  balance is not negative: balance at the end 95958
-  PASS  balance drop equals the amounts held by transfers: balance dropped by 1002995228, transfers not FAILED hold 1002995228
-  PASS  one transfer per accepted idempotency key: 462 accepted keys, 462 transfers, 0 missing, 0 unexpected; 0 uncertain keys (0 stored)
+  PASS  balance is not negative: balance at the end 235684
+  PASS  balance drop equals the amounts held by transfers: balance dropped by 999798299, transfers not FAILED hold 999798299
+  PASS  one transfer per accepted idempotency key: 460 accepted keys, 460 transfers, 0 missing, 0 unexpected; 0 uncertain keys (0 stored)
 
 PASS
 ```
@@ -291,10 +294,11 @@ docker compose exec postgres psql -U moneytransfer -c \
   "SELECT type, amount, balance_after FROM balance_entries WHERE transfer_id = '<id>' ORDER BY id;"
 ```
 
-One request through every service, by the correlation id from the response header:
+One request through every service, by the correlation id from the response header (the HAProxy
+line also names the api replica that answered):
 
 ```bash
-docker compose logs api worker | grep 69306aea-ab47-406d-a3bd-61fa8c0257c6
+docker compose logs haproxy api worker | grep 69306aea-ab47-406d-a3bd-61fa8c0257c6
 ```
 
 The RabbitMQ UI at http://localhost:18672 shows the `transfers` queue and the `transfers.dlq`
@@ -331,7 +335,8 @@ the next `make up` starts again from the seeded balance.
 
 ```mermaid
 flowchart LR
-    merchant([Merchant]) -->|POST /transfer| api
+    merchant([Merchant]) -->|POST /transfer| haproxy
+    haproxy -->|round robin| api["api x2"]
     api -->|"one transaction: transfer, outbox event, balance, ledger"| pg[(PostgreSQL)]
     relay -->|reads unsent outbox events| pg
     relay -->|publish, wait for confirm| mq[[RabbitMQ: transfers]]
@@ -421,6 +426,17 @@ reuses the normal startup path instead of adding reconnect logic.
 The worker loads the transfer from Postgres, so the broker, its UI and the dead-letter queue hold
 no personal data.
 
+**HAProxy in front of two api replicas.**
+Two replicas show that the balance guard holds across processes, not only inside one. HAProxy
+checks each replica's `/healthz` every second, so a replica that crashes or hangs leaves the
+rotation within a second or two. A request whose connection to a dead replica fails goes to the
+other one; a request that already reached a replica is never sent again, so a `POST` can't be
+submitted twice by the proxy. Replicas are found through Docker's DNS, so `--scale api=3` works
+without a restart. Open-source nginx doesn't fit: it has no active health checks, and when its
+DNS view changes during a failing request it gives up instead of trying the other replica (one
+`504` per crashed replica in every test run). Errors HAProxy answers itself use the same problem
+format as the api.
+
 **The load test reads results from Postgres.**
 The guarantees are about stored money, and the API has no balance endpoint (an unauthenticated
 one would be a hole). The checks are plain SQL, the same queries as in step 4.
@@ -461,8 +477,7 @@ one would be a hole). The checks are plain SQL, the same queries as in step 4.
   and `event=transfer_unknown` are structured fields for a log platform to alert on. Routing to
   chat or paging belongs in the monitoring platform (grouping, silencing, on-call), which isn't
   part of this setup.
-- **One api instance, no CI pipeline, no metrics endpoint.** The api is stateless and can run
-  behind a load balancer as is. Tests and lint run locally through `make`.
+- **No CI pipeline, no metrics endpoint.** Tests and lint run locally through `make`.
 - **Account numbers are stored in plain text** in Postgres (masked everywhere else).
 - **The mock provider's `/stats` and key store grow without bound**, which is fine for a demo.
 
@@ -484,6 +499,9 @@ Scale
 - Delayed retries through RabbitMQ (a retry queue, or scheduled delivery in RabbitMQ 4.4) when
   provider retries need minutes, so they don't occupy worker slots.
 - Batched or asynchronous publisher confirms if the relay becomes the bottleneck.
+- A connection pooler (PgBouncer) once replicas grow: every process opens up to
+  `DB_MAX_OPEN_CONNS` (20) connections, so 2 api replicas, the relay and 3 workers could reach 120
+  against Postgres' default limit of 100. The 3-worker load test peaks at 12.
 - Outbox retention: delete published rows after some days, or partition by date and drop old
   partitions.
 

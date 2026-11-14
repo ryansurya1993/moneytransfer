@@ -321,7 +321,7 @@ func (c MockProvider) LogValue() slog.Value {
 type LoadTest struct {
 	DB DB
 
-	TargetURL        string        `env:"LOADTEST_TARGET_URL" envDefault:"http://api:8080"`
+	TargetURL        string        `env:"LOADTEST_TARGET_URL" envDefault:"http://haproxy:8080"`
 	Rate             int           `env:"LOADTEST_RATE" envDefault:"20"`
 	Duration         time.Duration `env:"LOADTEST_DURATION" envDefault:"30s"`
 	Concurrency      int           `env:"LOADTEST_CONCURRENCY" envDefault:"20"`

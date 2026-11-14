@@ -375,8 +375,8 @@ func TestLoadLoadTest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.TargetURL != "http://api:8080" || c.Rate != 20 || c.Duration != 30*time.Second || c.Concurrency != 20 {
-		t.Errorf("target %q, rate %d, duration %v, concurrency %d; want http://api:8080, 20, 30s, 20",
+	if c.TargetURL != "http://haproxy:8080" || c.Rate != 20 || c.Duration != 30*time.Second || c.Concurrency != 20 {
+		t.Errorf("target %q, rate %d, duration %v, concurrency %d; want http://haproxy:8080, 20, 30s, 20",
 			c.TargetURL, c.Rate, c.Duration, c.Concurrency)
 	}
 	if c.MinAmount != 50_000 || c.MaxAmount != 5_000_000 {
