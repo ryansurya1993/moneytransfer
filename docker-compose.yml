@@ -1,5 +1,3 @@
-name: moneytransfer
-
 x-db-env: &db-env
   POSTGRES_USER: ${POSTGRES_USER:-moneytransfer}
   POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-moneytransfer}
