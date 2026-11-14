@@ -55,13 +55,17 @@ CREATE TABLE balance_entries (
     CONSTRAINT balance_entries_merchant_fk FOREIGN KEY (merchant_id) REFERENCES merchants (id),
     CONSTRAINT balance_entries_transfer_fk FOREIGN KEY (transfer_id) REFERENCES transfers (id),
     CONSTRAINT balance_entries_merchant_version_uniq UNIQUE (merchant_id, merchant_version),
-    CONSTRAINT balance_entries_type_valid CHECK (type IN ('OPENING', 'DEBIT', 'REFUND')),
+    CONSTRAINT balance_entries_type_valid CHECK (type IN ('OPENING', 'DEPOSIT', 'DEBIT', 'REFUND')),
     CONSTRAINT balance_entries_amount_sign CHECK (
-        (type = 'DEBIT' AND amount < 0) OR (type IN ('OPENING', 'REFUND') AND amount > 0)
+        (type = 'DEBIT' AND amount < 0) OR (type IN ('OPENING', 'DEPOSIT', 'REFUND') AND amount > 0)
     ),
-    CONSTRAINT balance_entries_transfer_link CHECK ((type = 'OPENING') = (transfer_id IS NULL)),
+    -- OPENING and DEPOSIT (a top-up) bring money from outside, so they belong to no transfer.
+    CONSTRAINT balance_entries_transfer_link CHECK ((type IN ('OPENING', 'DEPOSIT')) = (transfer_id IS NULL)),
     CONSTRAINT balance_entries_balance_after_non_negative CHECK (balance_after >= 0)
 );
+
+-- A transfer's debit and refund are looked up by transfer_id.
+CREATE INDEX balance_entries_transfer_id_idx ON balance_entries (transfer_id);
 
 CREATE TABLE outbox (
     id             BIGINT      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -75,3 +79,4 @@ CREATE TABLE outbox (
 );
 
 CREATE INDEX outbox_unsent_idx ON outbox (id) WHERE published_at IS NULL;
+CREATE INDEX outbox_transfer_id_idx ON outbox (transfer_id);
