@@ -90,7 +90,9 @@ X-Correlation-Id: 69306aea-ab47-406d-a3bd-61fa8c0257c6
  "reference_id":"INV-001","failure_code":null,"created_at":"...","updated_at":"..."}
 ```
 
-The balance is already deducted. A second or two later the payout is done:
+The api answers in a few milliseconds, with the balance already deducted. The payout runs in the
+background; the fake bank takes 0.2-2 seconds to answer (`MOCK_MIN_DELAY` and `MOCK_MAX_DELAY`
+in `.env`), so check again a moment later:
 
 ```bash
 curl localhost:18080/transfer/01a1d891-e9f2-7ee6-9809-e740d06dba54
@@ -100,12 +102,18 @@ curl localhost:18080/transfer/01a1d891-e9f2-7ee6-9809-e740d06dba54
 {"id":"01a1d891-...","status":"SUCCESS",...}
 ```
 
+About 1 in 10 transfers ends `FAILED` and a few end `UNKNOWN`. That is on purpose: see
+[Simulated provider errors](#simulated-provider-errors).
+
 Send the same POST again: the answer is the same transfer with `Idempotent-Replayed: true`, and
 nothing is deducted twice. Change the body but keep the key, and the answer is
 `422 IDEMPOTENCY_KEY_REUSED`. Use a new key for a new transfer.
 
-The fake provider succeeds about 80% of the time. Account numbers ending in these digits give a
-fixed outcome:
+#### Simulated provider errors
+
+The fake provider fails on purpose, so the failure paths can be seen, in two ways.
+
+**On demand.** Account numbers ending in these digits always give the same outcome:
 
 | Ends in | Provider does | Transfer ends as |
 |---|---|---|
@@ -113,6 +121,54 @@ fixed outcome:
 | `0002` | Pays, but the answer arrives after the worker gave up | `SUCCESS` after a retry with the same key, paid once |
 | `0003` | Answers 503 every time | `UNKNOWN` after 3 attempts, money stays held |
 | `0004` | Rejects with a code the service doesn't know | `UNKNOWN`, money stays held (never refunded on a guess) |
+
+**At random,** for any other account number:
+
+- about 10% are rejected with a bank error such as `REJECTED_BY_BANK`;
+- about 5% are paid, but the answer comes too late; the worker retries and gets `SUCCESS`;
+- about 5% get a 503; the worker retries, and most of them end `SUCCESS`.
+
+The three percentages are settings of the fake provider: `MOCK_FAILURE_PERCENT` (default 10),
+`MOCK_TIMEOUT_PERCENT` (5) and `MOCK_UNAVAILABLE_PERCENT` (5). Setting all three to 0 turns the
+random errors off, for example for a clean demo. Only the fake provider restarts; the data stays.
+
+*Option 1, for one run (bash).* Type this in the terminal, in the project folder:
+
+```bash
+MOCK_FAILURE_PERCENT=0 MOCK_TIMEOUT_PERCENT=0 MOCK_UNAVAILABLE_PERCENT=0 make up
+```
+
+To turn the random errors back on, type:
+
+```bash
+make up
+```
+
+*Option 2, until changed back (any terminal).* Copy the example settings file to `.env`:
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` in an editor, change these three lines to 0, save, and run `make up`:
+
+```
+MOCK_FAILURE_PERCENT=0
+MOCK_TIMEOUT_PERCENT=0
+MOCK_UNAVAILABLE_PERCENT=0
+```
+
+To turn them back on, set the lines back to 10, 5 and 5 (or delete `.env`), and run `make up`
+again. `.env` is local only; git ignores it.
+
+**What happens after an error.** The worker retries timeouts and 503s by itself, up to 3 attempts,
+always with the same provider key, so a retry never pays twice. Then:
+
+- `FAILED` is final, and the amount is already back on the balance. To try again, send a new
+  request with a new `Idempotency-Key`; the old key returns the failed transfer.
+- `UNKNOWN` means the provider gave no clear answer, so the bank may have paid. The money stays
+  held. Don't resubmit, which could pay twice; it needs a check with the provider (see
+  [Cut corners](#cut-corners)).
 
 Request rules:
 
