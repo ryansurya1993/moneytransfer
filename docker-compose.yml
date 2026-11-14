@@ -206,6 +206,7 @@ services:
     environment:
       DATABASE_URL: *database-url
       LOADTEST_TARGET_URL: ${LOADTEST_TARGET_URL:-}
+      LOADTEST_PROVIDER_URL: ${LOADTEST_PROVIDER_URL:-}
       LOADTEST_RATE: ${LOADTEST_RATE:-}
       LOADTEST_DURATION: ${LOADTEST_DURATION:-}
       LOADTEST_CONCURRENCY: ${LOADTEST_CONCURRENCY:-}
@@ -222,6 +223,8 @@ services:
       relay:
         condition: service_started
       worker:
+        condition: service_started
+      mockprovider:
         condition: service_started
 
 volumes:

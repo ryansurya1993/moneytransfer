@@ -328,6 +328,7 @@ type LoadTest struct {
 	DB DB
 
 	TargetURL        string        `env:"LOADTEST_TARGET_URL" envDefault:"http://haproxy:8080"`
+	ProviderURL      string        `env:"LOADTEST_PROVIDER_URL" envDefault:"http://mockprovider:8080"`
 	Rate             int           `env:"LOADTEST_RATE" envDefault:"20"`
 	Duration         time.Duration `env:"LOADTEST_DURATION" envDefault:"30s"`
 	Concurrency      int           `env:"LOADTEST_CONCURRENCY" envDefault:"20"`
@@ -349,8 +350,14 @@ func LoadLoadTest() (LoadTest, error) {
 	}
 
 	var errs []error
-	if u, err := url.Parse(c.TargetURL); err != nil || u.Scheme == "" || u.Host == "" {
-		errs = append(errs, errors.New("LOADTEST_TARGET_URL must be an absolute URL"))
+	urls := []struct{ name, value string }{
+		{"LOADTEST_TARGET_URL", c.TargetURL},
+		{"LOADTEST_PROVIDER_URL", c.ProviderURL},
+	}
+	for _, u := range urls {
+		if parsed, err := url.Parse(u.value); err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			errs = append(errs, fmt.Errorf("%s must be an absolute URL", u.name))
+		}
 	}
 	positive := []struct {
 		name  string

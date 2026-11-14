@@ -52,20 +52,91 @@ func checkNotNegative(end snapshot) check {
 	}
 }
 
-// checkBalanceDrop compares what the merchant lost with what its transfers still hold.
-// A FAILED transfer was refunded; every other status keeps its amount.
-func checkBalanceDrop(start, end snapshot, ts []storedTransfer) check {
-	var held int64
+// checkLedger proves every balance change during the run has a ledger entry, whoever caused it.
+// Each change bumps the merchant version by one, so the versions between the snapshots must all be there.
+func checkLedger(start, end snapshot, w ledgerWindow) check {
+	change := end.Balance - start.Balance
+	versions := end.Version - start.Version
+	lastOK := w.Entries == 0 || (w.LastBalanceAfter != nil && *w.LastBalanceAfter == end.Balance)
+	detail := fmt.Sprintf("balance changed by %d, %d entries for %d versions add up to %d", change, w.Entries, versions, w.Sum)
+	if !lastOK {
+		detail += fmt.Sprintf(", newest balance_after %d is not the balance", *w.LastBalanceAfter)
+	}
+	return check{
+		name:   "ledger explains the balance",
+		passed: w.Entries == versions && w.Sum == change && lastOK,
+		detail: detail,
+	}
+}
+
+// checkTransferEntries proves each transfer was debited once and refunded once only if it FAILED.
+func checkTransferEntries(ts []storedTransfer) check {
+	var badDebits, badRefunds int
 	for _, t := range ts {
-		if t.Status != "FAILED" {
-			held += t.Amount
+		if t.Debits != 1 || t.Debited != -t.Amount {
+			badDebits++
+		}
+		refundOK := t.Refunds == 0
+		if t.Status == "FAILED" {
+			refundOK = t.Refunds == 1 && t.Refunded == t.Amount
+		}
+		if !refundOK {
+			badRefunds++
 		}
 	}
-	drop := start.Balance - end.Balance
 	return check{
-		name:   "balance drop equals the amounts held by transfers",
-		passed: drop == held,
-		detail: fmt.Sprintf("balance dropped by %d, transfers not FAILED hold %d", drop, held),
+		name:   "each transfer debited once, refunded only if FAILED",
+		passed: badDebits == 0 && badRefunds == 0,
+		detail: fmt.Sprintf("%d transfers, %d with a wrong debit, %d with a wrong refund", len(ts), badDebits, badRefunds),
+	}
+}
+
+// checkProvider compares each transfer's outcome with the payout the provider recorded under its id.
+// A FAILED transfer was refunded, so the provider must have declined it, never paid it.
+// UNKNOWN transfers are still being settled by the reconciler and only counted.
+func checkProvider(ts []storedTransfer, payouts map[string]string) check {
+	var successNotPaid, failedNotDeclined, unknown, unknownPaid int
+	for _, t := range ts {
+		got := payouts[t.ID]
+		switch t.Status {
+		case "SUCCESS":
+			if got != "SUCCEEDED" {
+				successNotPaid++
+			}
+		case "FAILED":
+			if got != "FAILED" {
+				failedNotDeclined++
+			}
+		case "UNKNOWN":
+			unknown++
+			if got == "SUCCEEDED" {
+				unknownPaid++
+			}
+		}
+	}
+	return check{
+		name:   "provider agrees with every outcome",
+		passed: successNotPaid == 0 && failedNotDeclined == 0,
+		detail: fmt.Sprintf("%d SUCCESS not paid, %d FAILED not declined; %d UNKNOWN (%d already paid)",
+			successNotPaid, failedNotDeclined, unknown, unknownPaid),
+	}
+}
+
+// checkEventsPublished proves each transfer got exactly one transfer.created event and the relay sent it.
+func checkEventsPublished(ts []storedTransfer) check {
+	var wrongCount, unpublished int
+	for _, t := range ts {
+		if t.Events != 1 {
+			wrongCount++
+		}
+		if t.PublishedEvents != t.Events {
+			unpublished++
+		}
+	}
+	return check{
+		name:   "every transfer's event published",
+		passed: wrongCount == 0 && unpublished == 0,
+		detail: fmt.Sprintf("%d transfers, %d without exactly one event, %d not published", len(ts), wrongCount, unpublished),
 	}
 }
 

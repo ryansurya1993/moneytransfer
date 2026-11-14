@@ -242,46 +242,56 @@ What it sends, for 30 seconds:
 
 The requests go through HAProxy, so both api replicas deduct from the same balance at the same time.
 
-Then it waits until none of its transfers is `PENDING` or `PROCESSING` and checks Postgres:
+Then it waits until none of its transfers is `PENDING` or `PROCESSING` and checks Postgres and
+the mock provider:
 
 1. Every transfer finished.
 2. The balance is not negative.
-3. The balance dropped by exactly the amounts of the transfers that are not `FAILED` (a failed
-   transfer is refunded; `SUCCESS` and `UNKNOWN` keep the money).
-4. Each accepted idempotency key has exactly one transfer.
+3. The ledger explains every balance change during the run: one entry per merchant version, adding
+   up to the change.
+4. Each transfer has one debit, and one refund only if it `FAILED`.
+5. Each accepted idempotency key has exactly one transfer.
+6. The provider agrees: every `SUCCESS` was paid, every `FAILED` (refunded) one was declined.
+7. Each transfer has exactly one event in the outbox, and it was published.
+
+Other traffic on the merchant during a run (a manual transfer, a top-up, a reconciled refund) is
+fine: it shows up as other balance changes and the checks tell it apart through the ledger.
 
 A run on a laptop with 3 workers:
 
 ```
-Load test 20261114T073147Z-1762
+Load test 20261114T112415Z-2d09
   target     http://haproxy:8080, 20 requests/s for 30s, at most 20 in flight
-  balance    1000033983 at the start, amounts 50000-5000000
+  balance    1000000000 at the start, amounts 50000-5000000
 
 Traffic
-  requests   633 sent, 0 skipped (no free slot), 21.1/s
-  latency    p50 5ms, p95 8ms, p99 11ms
-  202 new    460
-  202 replay 49
-  422        124
+  requests   629 sent, 0 skipped (no free slot), 21.0/s
+  latency    p50 6ms, p95 13ms, p99 19ms
+  202 new    423
+  202 replay 47
+  422        159
   no answer  0
 
-Transfers created: 460 (waited 1s for their outcomes after sending)
-  SUCCESS     392  amount 977643686
-  FAILED       58  amount 139653119
-  UNKNOWN      10  amount 22154613
+Transfers created: 423 (waited 0s for their outcomes after sending)
+  SUCCESS     365  amount 968074442
+  FAILED       46  amount 120380428
+  UNKNOWN      12  amount 31918875
+  other balance changes during the run: 0
 
 Checks
   PASS  all transfers finished: none left PENDING or PROCESSING
-  PASS  balance is not negative: balance at the end 235684
-  PASS  balance drop equals the amounts held by transfers: balance dropped by 999798299, transfers not FAILED hold 999798299
-  PASS  one transfer per accepted idempotency key: 460 accepted keys, 460 transfers, 0 missing, 0 unexpected; 0 uncertain keys (0 stored)
+  PASS  balance is not negative: balance at the end 6683
+  PASS  ledger explains the balance: balance changed by -999993317, 469 entries for 469 versions add up to -999993317
+  PASS  each transfer debited once, refunded only if FAILED: 423 transfers, 0 with a wrong debit, 0 with a wrong refund
+  PASS  one transfer per accepted idempotency key: 423 accepted keys, 423 transfers, 0 missing, 0 unexpected; 0 uncertain keys (0 stored)
+  PASS  provider agrees with every outcome: 0 SUCCESS not paid, 0 FAILED not declined; 12 UNKNOWN (0 already paid)
+  PASS  every transfer's event published: 423 transfers, 0 without exactly one event, 0 not published
 
 PASS
 ```
 
 Exit code 0 means every check passed, 1 means a check failed, 2 means the run couldn't be judged
-(setup problem, transfers still in flight at the start, or the balance moved for another reason
-during the run, which is reported as `INVALID`). A second run needs more money: see step 6.
+(setup problem, or the balance is too low). A second run needs more money: see step 6.
 
 ### 4. Check it yourself
 
@@ -338,7 +348,7 @@ make topup AMOUNT=1000000000
 
 Without make: `docker compose run --rm --build --no-deps loadtest topup 1000000000`. A top-up goes
 through the same code as a refund and writes a `DEPOSIT` ledger entry, so the ledger still
-explains the balance. Don't top up during a load test: the run would be `INVALID`.
+explains the balance.
 
 `make down` stops everything and keeps the data. `docker compose down -v` also deletes the data;
 the next `make up` starts again from the seeded balance.
@@ -471,7 +481,8 @@ they aren't one setting because HAProxy can't parse Go durations such as `1m30s`
 
 **The load test reads results from Postgres.**
 The guarantees are about stored money, and the API has no balance endpoint (an unauthenticated
-one would be a hole). The checks are plain SQL, the same queries as in step 4.
+one would be a hole). The checks are plain SQL, the same queries as in step 4, plus the mock
+provider's list of payouts.
 
 ## Assumptions
 

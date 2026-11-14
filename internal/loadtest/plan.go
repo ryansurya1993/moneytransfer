@@ -63,7 +63,7 @@ func newPlan(rng *rand.Rand, o planOptions) []shot {
 				BankCode:          "BCA",
 				AccountNumber:     pickAccount(rng, o.magicPercent),
 				AccountHolderName: "Load Test",
-				ReferenceID:       fmt.Sprintf("%s%05d", referencePrefix(o.runID), len(sent)+1),
+				ReferenceID:       runReference(o.runID),
 			},
 		}
 		sent = append(sent, req)
@@ -86,6 +86,7 @@ func pickAccount(rng *rand.Rand, magicPercent int) string {
 	}
 }
 
-func referencePrefix(runID string) string {
-	return "lt-" + runID + "-"
+// runReference tags every transfer of a run, so the checks can find them all, even those whose answer was lost.
+func runReference(runID string) string {
+	return "lt-" + runID
 }

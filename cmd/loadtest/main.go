@@ -60,6 +60,7 @@ func run() int {
 
 	report, err := loadtest.Run(ctx, db, loadtest.Options{
 		TargetURL:        cfg.TargetURL,
+		ProviderURL:      cfg.ProviderURL,
 		Rate:             cfg.Rate,
 		Duration:         cfg.Duration,
 		Concurrency:      cfg.Concurrency,
@@ -76,11 +77,7 @@ func run() int {
 		return 2
 	}
 	report.Write(os.Stdout)
-
-	switch {
-	case !report.Valid():
-		return 2
-	case !report.Passed():
+	if !report.Passed() {
 		return 1
 	}
 	return 0

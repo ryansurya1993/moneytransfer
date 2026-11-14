@@ -50,20 +50,13 @@ func TestReportVerdict(t *testing.T) {
 	pass := check{name: "ok", passed: true}
 	fail := check{name: "broken"}
 	tests := []struct {
-		name      string
-		report    Report
-		wantLast  string
-		wantValid bool
-		wantPass  bool
+		name     string
+		report   Report
+		wantLast string
+		wantPass bool
 	}{
-		{name: "all pass", report: Report{checks: []check{pass, pass}}, wantLast: "PASS", wantValid: true, wantPass: true},
-		{name: "one fails", report: Report{checks: []check{pass, fail}}, wantLast: "FAIL", wantValid: true},
-		{
-			name:     "outside change",
-			report:   Report{checks: []check{pass}, invalid: "1 balance change"},
-			wantLast: "INVALID: 1 balance change",
-			wantPass: true,
-		},
+		{name: "all pass", report: Report{checks: []check{pass, pass}}, wantLast: "PASS", wantPass: true},
+		{name: "one fails", report: Report{checks: []check{pass, fail}}, wantLast: "FAIL"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -74,8 +67,8 @@ func TestReportVerdict(t *testing.T) {
 			if last := lines[len(lines)-1]; last != tt.wantLast {
 				t.Errorf("last line %q, want %q", last, tt.wantLast)
 			}
-			if tt.report.Valid() != tt.wantValid || tt.report.Passed() != tt.wantPass {
-				t.Errorf("Valid %v, Passed %v; want %v, %v", tt.report.Valid(), tt.report.Passed(), tt.wantValid, tt.wantPass)
+			if tt.report.Passed() != tt.wantPass {
+				t.Errorf("Passed %v, want %v", tt.report.Passed(), tt.wantPass)
 			}
 		})
 	}

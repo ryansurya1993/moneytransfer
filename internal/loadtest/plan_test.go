@@ -3,7 +3,6 @@ package loadtest
 import (
 	"math/rand/v2"
 	"slices"
-	"strings"
 	"testing"
 )
 
@@ -27,7 +26,6 @@ func TestNewPlan(t *testing.T) {
 
 	var retries, twins, magic int
 	seen := map[*request]bool{}
-	refs := map[string]bool{}
 	for i, s := range shots {
 		if s.retry {
 			retries++
@@ -44,10 +42,9 @@ func TestNewPlan(t *testing.T) {
 			twins++
 		}
 		b := s.req.body
-		if !strings.HasPrefix(b.ReferenceID, "lt-run1-") || refs[b.ReferenceID] {
-			t.Errorf("shot %d: reference %q is not a new lt-run1- reference", i, b.ReferenceID)
+		if b.ReferenceID != "lt-run1" {
+			t.Errorf("shot %d: reference %q, want the run's lt-run1", i, b.ReferenceID)
 		}
-		refs[b.ReferenceID] = true
 		if b.Amount < 500 || b.Amount > 1500 {
 			t.Errorf("shot %d: amount %d outside 500-1500", i, b.Amount)
 		}

@@ -18,9 +18,9 @@ type Report struct {
 	traffic      traffic
 	drainTime    time.Duration
 	transfers    []storedTransfer
+	// otherChanges counts ledger entries during the run that came from something else.
+	otherChanges int64
 	checks       []check
-	// invalid explains why the checks can't be trusted, for example a transfer made outside the run.
-	invalid string
 }
 
 // Passed reports whether every check passed.
@@ -31,12 +31,6 @@ func (r Report) Passed() bool {
 		}
 	}
 	return true
-}
-
-// Valid reports whether the checks can be trusted. Something else moving the balance during the run
-// makes them meaningless, whether they passed or not.
-func (r Report) Valid() bool {
-	return r.invalid == ""
 }
 
 // Write prints the report as plain text.
@@ -65,6 +59,7 @@ func (r Report) Write(w io.Writer) {
 			p("  %-10s %4d  amount %d", s.status, s.count, s.amount)
 		}
 	}
+	p("  other balance changes during the run: %d", r.otherChanges)
 	p("")
 
 	p("Checks")
@@ -77,12 +72,9 @@ func (r Report) Write(w io.Writer) {
 	}
 	p("")
 
-	switch {
-	case r.invalid != "":
-		p("INVALID: %s", r.invalid)
-	case r.Passed():
+	if r.Passed() {
 		p("PASS")
-	default:
+	} else {
 		p("FAIL")
 	}
 }

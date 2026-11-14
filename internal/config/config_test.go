@@ -380,6 +380,9 @@ func TestLoadLoadTest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if c.ProviderURL != "http://mockprovider:8080" {
+		t.Errorf("provider %q, want http://mockprovider:8080", c.ProviderURL)
+	}
 	if c.TargetURL != "http://haproxy:8080" || c.Rate != 20 || c.Duration != 30*time.Second || c.Concurrency != 20 {
 		t.Errorf("target %q, rate %d, duration %v, concurrency %d; want http://haproxy:8080, 20, 30s, 20",
 			c.TargetURL, c.Rate, c.Duration, c.Concurrency)
@@ -400,6 +403,7 @@ func TestLoadLoadTestErrors(t *testing.T) {
 	}{
 		{name: "database url missing", env: map[string]string{"DATABASE_URL": ""}, wantErr: "DATABASE_URL"},
 		{name: "relative target", env: map[string]string{"LOADTEST_TARGET_URL": "api:8080"}, wantErr: "LOADTEST_TARGET_URL must be an absolute URL"},
+		{name: "relative provider", env: map[string]string{"LOADTEST_PROVIDER_URL": "mockprovider"}, wantErr: "LOADTEST_PROVIDER_URL must be an absolute URL"},
 		{name: "no rate", env: map[string]string{"LOADTEST_RATE": "0"}, wantErr: "LOADTEST_RATE must be greater than 0"},
 		{name: "duplicates over 100", env: map[string]string{"LOADTEST_DUPLICATE_PERCENT": "101"}, wantErr: "LOADTEST_DUPLICATE_PERCENT must be between 0 and 100"},
 		{name: "negative magic", env: map[string]string{"LOADTEST_MAGIC_PERCENT": "-1"}, wantErr: "LOADTEST_MAGIC_PERCENT must be between 0 and 100"},
