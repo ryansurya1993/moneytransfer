@@ -44,6 +44,14 @@ linters:
       packages:
         - github.com/jmoiron/sqlx
 
+  exclusions:
+    rules:
+      # The fake provider's randomness only picks outcomes and delays; nothing depends on it being unpredictable.
+      - path: internal/mockprovider/
+        linters:
+          - gosec
+        text: G404
+
 formatters:
   enable:
     - gofmt

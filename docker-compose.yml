@@ -78,5 +78,20 @@ services:
     # Longer than HTTP_SHUTDOWN_TIMEOUT, so in-flight requests can finish before Docker kills the process.
     stop_grace_period: 15s
 
+  # Fake payout provider, reachable only inside the compose network at http://mockprovider:8080.
+  mockprovider:
+    build: .
+    command: ["/usr/local/bin/mockprovider"]
+    environment:
+      MOCK_MIN_DELAY: ${MOCK_MIN_DELAY:-}
+      MOCK_MAX_DELAY: ${MOCK_MAX_DELAY:-}
+      MOCK_FAILURE_PERCENT: ${MOCK_FAILURE_PERCENT:-}
+      MOCK_TIMEOUT_PERCENT: ${MOCK_TIMEOUT_PERCENT:-}
+      MOCK_UNAVAILABLE_PERCENT: ${MOCK_UNAVAILABLE_PERCENT:-}
+      MOCK_HANG_DURATION: ${MOCK_HANG_DURATION:-}
+      LOG_LEVEL: ${LOG_LEVEL:-}
+    restart: unless-stopped
+    stop_grace_period: 15s
+
 volumes:
   pgdata:

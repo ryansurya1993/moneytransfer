@@ -3,6 +3,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/url"
 	"time"
@@ -70,22 +71,93 @@ func LoadAPI() (API, error) {
 
 // LogValue lists the settings by variable name, with the database password hidden.
 func (c API) LogValue() slog.Value {
-	return slog.GroupValue(
+	attrs := []slog.Attr{
 		slog.String("DATABASE_URL", redactURL(c.DB.URL)),
 		slog.Int("DB_MAX_OPEN_CONNS", c.DB.MaxOpenConns),
 		slog.Int("DB_MAX_IDLE_CONNS", c.DB.MaxIdleConns),
 		slog.String("DB_CONN_MAX_LIFETIME", c.DB.ConnMaxLifetime.String()),
 		slog.String("DB_TIMEOUT", c.DBTimeout.String()),
-		slog.Int("HTTP_PORT", c.HTTP.Port),
-		slog.String("HTTP_READ_HEADER_TIMEOUT", c.HTTP.ReadHeaderTimeout.String()),
-		slog.String("HTTP_READ_TIMEOUT", c.HTTP.ReadTimeout.String()),
-		slog.String("HTTP_WRITE_TIMEOUT", c.HTTP.WriteTimeout.String()),
-		slog.String("HTTP_IDLE_TIMEOUT", c.HTTP.IdleTimeout.String()),
-		slog.String("HTTP_SHUTDOWN_TIMEOUT", c.HTTP.ShutdownTimeout.String()),
 		slog.Int64("MAX_TRANSFER_AMOUNT", c.MaxTransferAmount),
 		slog.Int64("MERCHANT_ID", c.MerchantID),
 		slog.String("LOG_LEVEL", c.LogLevel.String()),
-	)
+	}
+	return slog.GroupValue(append(attrs, c.HTTP.logAttrs()...)...)
+}
+
+// MockProvider holds the settings of the fake payout provider.
+type MockProvider struct {
+	HTTP HTTP
+
+	MinDelay           time.Duration `env:"MOCK_MIN_DELAY" envDefault:"200ms"`
+	MaxDelay           time.Duration `env:"MOCK_MAX_DELAY" envDefault:"2s"`
+	FailurePercent     int           `env:"MOCK_FAILURE_PERCENT" envDefault:"10"`
+	TimeoutPercent     int           `env:"MOCK_TIMEOUT_PERCENT" envDefault:"5"`
+	UnavailablePercent int           `env:"MOCK_UNAVAILABLE_PERCENT" envDefault:"5"`
+	// HangDuration is how long a paid-but-timed-out call stalls. It must exceed the caller's timeout.
+	HangDuration time.Duration `env:"MOCK_HANG_DURATION" envDefault:"8s"`
+	LogLevel     slog.Level    `env:"LOG_LEVEL" envDefault:"info"`
+}
+
+// LoadMockProvider reads the mock provider settings from the environment.
+// The error lists every missing or invalid setting, not just the first.
+func LoadMockProvider() (MockProvider, error) {
+	c, err := env.ParseAs[MockProvider]()
+	if err != nil {
+		return MockProvider{}, err
+	}
+
+	var errs []error
+	percents := []struct {
+		name  string
+		value int
+	}{
+		{"MOCK_FAILURE_PERCENT", c.FailurePercent},
+		{"MOCK_TIMEOUT_PERCENT", c.TimeoutPercent},
+		{"MOCK_UNAVAILABLE_PERCENT", c.UnavailablePercent},
+	}
+	for _, p := range percents {
+		if p.value < 0 || p.value > 100 {
+			errs = append(errs, fmt.Errorf("%s must be between 0 and 100", p.name))
+		}
+	}
+	if c.FailurePercent+c.TimeoutPercent+c.UnavailablePercent > 100 {
+		errs = append(errs, errors.New("MOCK_FAILURE_PERCENT, MOCK_TIMEOUT_PERCENT and MOCK_UNAVAILABLE_PERCENT must add up to at most 100"))
+	}
+	if c.MinDelay < 0 || c.MinDelay > c.MaxDelay {
+		errs = append(errs, errors.New("MOCK_MIN_DELAY must be between 0 and MOCK_MAX_DELAY"))
+	}
+	if c.HangDuration <= 0 {
+		errs = append(errs, errors.New("MOCK_HANG_DURATION must be greater than 0"))
+	}
+	if err := errors.Join(errs...); err != nil {
+		return MockProvider{}, err
+	}
+	return c, nil
+}
+
+// LogValue lists the settings by variable name.
+func (c MockProvider) LogValue() slog.Value {
+	attrs := []slog.Attr{
+		slog.String("MOCK_MIN_DELAY", c.MinDelay.String()),
+		slog.String("MOCK_MAX_DELAY", c.MaxDelay.String()),
+		slog.Int("MOCK_FAILURE_PERCENT", c.FailurePercent),
+		slog.Int("MOCK_TIMEOUT_PERCENT", c.TimeoutPercent),
+		slog.Int("MOCK_UNAVAILABLE_PERCENT", c.UnavailablePercent),
+		slog.String("MOCK_HANG_DURATION", c.HangDuration.String()),
+		slog.String("LOG_LEVEL", c.LogLevel.String()),
+	}
+	return slog.GroupValue(append(attrs, c.HTTP.logAttrs()...)...)
+}
+
+func (h HTTP) logAttrs() []slog.Attr {
+	return []slog.Attr{
+		slog.Int("HTTP_PORT", h.Port),
+		slog.String("HTTP_READ_HEADER_TIMEOUT", h.ReadHeaderTimeout.String()),
+		slog.String("HTTP_READ_TIMEOUT", h.ReadTimeout.String()),
+		slog.String("HTTP_WRITE_TIMEOUT", h.WriteTimeout.String()),
+		slog.String("HTTP_IDLE_TIMEOUT", h.IdleTimeout.String()),
+		slog.String("HTTP_SHUTDOWN_TIMEOUT", h.ShutdownTimeout.String()),
+	}
 }
 
 // redactURL hides the password in a URL. Anything that doesn't parse as a URL with a scheme
