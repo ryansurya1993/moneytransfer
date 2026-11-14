@@ -39,9 +39,10 @@ func run() error {
 
 	openCtx, cancelOpen := context.WithTimeout(ctx, cfg.DBTimeout)
 	db, err := postgres.Open(openCtx, cfg.DB.URL, postgres.PoolConfig{
-		MaxOpenConns:    cfg.DB.MaxOpenConns,
-		MaxIdleConns:    cfg.DB.MaxIdleConns,
-		ConnMaxLifetime: cfg.DB.ConnMaxLifetime,
+		MaxOpenConns:             cfg.DB.MaxOpenConns,
+		MaxIdleConns:             cfg.DB.MaxIdleConns,
+		ConnMaxLifetime:          cfg.DB.ConnMaxLifetime,
+		IdleInTransactionTimeout: cfg.DB.IdleInTransactionTimeout,
 	})
 	cancelOpen()
 	if err != nil {

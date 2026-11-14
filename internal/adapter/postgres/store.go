@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -21,6 +22,10 @@ type PoolConfig struct {
 	MaxOpenConns    int
 	MaxIdleConns    int
 	ConnMaxLifetime time.Duration
+	// IdleInTransactionTimeout makes Postgres end a session idling inside an open transaction.
+	// A transaction left open by a failed rollback then can't hold its row locks for long.
+	// Zero keeps the server default, which is no limit.
+	IdleInTransactionTimeout time.Duration
 }
 
 // Open connects to the database at url and checks that it is reachable.
@@ -28,6 +33,9 @@ func Open(ctx context.Context, url string, pool PoolConfig) (*sqlx.DB, error) {
 	cfg, err := pgx.ParseConfig(url)
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
+	}
+	if pool.IdleInTransactionTimeout > 0 {
+		cfg.RuntimeParams["idle_in_transaction_session_timeout"] = strconv.FormatInt(pool.IdleInTransactionTimeout.Milliseconds(), 10)
 	}
 	db := sqlx.NewDb(stdlib.OpenDB(*cfg), "pgx")
 	db.SetMaxOpenConns(pool.MaxOpenConns)

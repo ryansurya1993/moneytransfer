@@ -199,3 +199,108 @@ func TestMockProviderLogValue(t *testing.T) {
 		}
 	}
 }
+
+const amqpURL = "amqp://app:s3cret@rabbitmq:5672/" //nolint:gosec // fake test credentials
+
+func TestLoadRelay(t *testing.T) {
+	t.Setenv("DATABASE_URL", dbURL)
+	t.Setenv("RABBITMQ_URL", amqpURL)
+
+	c, err := config.LoadRelay()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.PollInterval != 200*time.Millisecond || c.BatchSize != 50 || c.PublishTimeout != 5*time.Second {
+		t.Errorf("poll %v batch %d publish %v, want 200ms 50 5s", c.PollInterval, c.BatchSize, c.PublishTimeout)
+	}
+	if c.StallTimeout != time.Minute || c.OutboxAlertAge != 2*time.Minute || c.DeliveryLimit != 5 {
+		t.Errorf("stall %v alert %v limit %d, want 1m 2m 5", c.StallTimeout, c.OutboxAlertAge, c.DeliveryLimit)
+	}
+}
+
+func TestLoadRelayErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     map[string]string
+		wantErr string
+	}{
+		{name: "rabbitmq url missing", env: map[string]string{"RABBITMQ_URL": ""}, wantErr: "RABBITMQ_URL"},
+		{name: "zero batch", env: map[string]string{"RELAY_BATCH_SIZE": "0"}, wantErr: "RELAY_BATCH_SIZE must be greater than 0"},
+		{name: "zero delivery limit", env: map[string]string{"QUEUE_DELIVERY_LIMIT": "0"}, wantErr: "QUEUE_DELIVERY_LIMIT must be greater than 0"},
+		{
+			name:    "stall shorter than one publish",
+			env:     map[string]string{"RELAY_STALL_TIMEOUT": "5s", "RELAY_PUBLISH_TIMEOUT": "5s"},
+			wantErr: "RELAY_STALL_TIMEOUT must be longer than RELAY_PUBLISH_TIMEOUT",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", dbURL)
+			t.Setenv("RABBITMQ_URL", amqpURL)
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+
+			_, err := config.LoadRelay()
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("got error %v, want one containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestRelayLogValueHidesPasswords(t *testing.T) {
+	var buf bytes.Buffer
+	c := config.Relay{DB: config.DB{URL: dbURL}, RabbitMQURL: amqpURL}
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("config", "config", c)
+
+	if strings.Contains(buf.String(), "s3cret") {
+		t.Errorf("log line leaks a password: %s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "amqp://app:xxxxx@rabbitmq:5672/") {
+		t.Errorf("log line %s doesn't contain the redacted RabbitMQ URL", buf.String())
+	}
+}
+
+func TestIdleInTransactionTimeout(t *testing.T) {
+	tests := []struct {
+		name    string
+		load    func() error
+		env     map[string]string
+		wantErr string
+	}{
+		{
+			name:    "api rejects zero",
+			load:    func() error { _, err := config.LoadAPI(); return err },
+			env:     map[string]string{"DB_IDLE_IN_TRANSACTION_TIMEOUT": "0s"},
+			wantErr: "DB_IDLE_IN_TRANSACTION_TIMEOUT must be greater than 0",
+		},
+		{
+			name:    "relay needs it above the publish timeout",
+			load:    func() error { _, err := config.LoadRelay(); return err },
+			env:     map[string]string{"DB_IDLE_IN_TRANSACTION_TIMEOUT": "5s", "RELAY_PUBLISH_TIMEOUT": "5s"},
+			wantErr: "DB_IDLE_IN_TRANSACTION_TIMEOUT must be longer than RELAY_PUBLISH_TIMEOUT",
+		},
+		{
+			name: "defaults are consistent",
+			load: func() error { _, err := config.LoadRelay(); return err },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", dbURL)
+			t.Setenv("RABBITMQ_URL", amqpURL)
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+
+			err := tt.load()
+			if tt.wantErr == "" && err != nil {
+				t.Errorf("got error %v, want none", err)
+			}
+			if tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Errorf("got error %v, want one containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}

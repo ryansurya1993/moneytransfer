@@ -14,10 +14,11 @@ import (
 // DB holds the database connection settings.
 type DB struct {
 	// required alone accepts a variable that is set but empty.
-	URL             string        `env:"DATABASE_URL,required,notEmpty"`
-	MaxOpenConns    int           `env:"DB_MAX_OPEN_CONNS" envDefault:"20"`
-	MaxIdleConns    int           `env:"DB_MAX_IDLE_CONNS" envDefault:"10"`
-	ConnMaxLifetime time.Duration `env:"DB_CONN_MAX_LIFETIME" envDefault:"30m"`
+	URL                      string        `env:"DATABASE_URL,required,notEmpty"`
+	MaxOpenConns             int           `env:"DB_MAX_OPEN_CONNS" envDefault:"20"`
+	MaxIdleConns             int           `env:"DB_MAX_IDLE_CONNS" envDefault:"10"`
+	ConnMaxLifetime          time.Duration `env:"DB_CONN_MAX_LIFETIME" envDefault:"30m"`
+	IdleInTransactionTimeout time.Duration `env:"DB_IDLE_IN_TRANSACTION_TIMEOUT" envDefault:"10s"`
 }
 
 // HTTP holds the HTTP server settings.
@@ -57,6 +58,9 @@ func LoadAPI() (API, error) {
 	if c.DBTimeout <= 0 {
 		errs = append(errs, errors.New("DB_TIMEOUT must be greater than 0"))
 	}
+	if c.DB.IdleInTransactionTimeout <= 0 {
+		errs = append(errs, errors.New("DB_IDLE_IN_TRANSACTION_TIMEOUT must be greater than 0"))
+	}
 	if c.MaxTransferAmount <= 0 {
 		errs = append(errs, errors.New("MAX_TRANSFER_AMOUNT must be greater than 0"))
 	}
@@ -76,9 +80,84 @@ func (c API) LogValue() slog.Value {
 		slog.Int("DB_MAX_OPEN_CONNS", c.DB.MaxOpenConns),
 		slog.Int("DB_MAX_IDLE_CONNS", c.DB.MaxIdleConns),
 		slog.String("DB_CONN_MAX_LIFETIME", c.DB.ConnMaxLifetime.String()),
+		slog.String("DB_IDLE_IN_TRANSACTION_TIMEOUT", c.DB.IdleInTransactionTimeout.String()),
 		slog.String("DB_TIMEOUT", c.DBTimeout.String()),
 		slog.Int64("MAX_TRANSFER_AMOUNT", c.MaxTransferAmount),
 		slog.Int64("MERCHANT_ID", c.MerchantID),
+		slog.String("LOG_LEVEL", c.LogLevel.String()),
+	}
+	return slog.GroupValue(append(attrs, c.HTTP.logAttrs()...)...)
+}
+
+// Relay holds the settings of the relay binary.
+type Relay struct {
+	DB   DB
+	HTTP HTTP
+
+	RabbitMQURL    string        `env:"RABBITMQ_URL,required,notEmpty"`
+	PollInterval   time.Duration `env:"RELAY_POLL_INTERVAL" envDefault:"200ms"`
+	BatchSize      int           `env:"RELAY_BATCH_SIZE" envDefault:"50"`
+	PublishTimeout time.Duration `env:"RELAY_PUBLISH_TIMEOUT" envDefault:"5s"`
+	StallTimeout   time.Duration `env:"RELAY_STALL_TIMEOUT" envDefault:"1m"`
+	OutboxAlertAge time.Duration `env:"OUTBOX_ALERT_AGE" envDefault:"2m"`
+	DeliveryLimit  int           `env:"QUEUE_DELIVERY_LIMIT" envDefault:"5"`
+	LogLevel       slog.Level    `env:"LOG_LEVEL" envDefault:"info"`
+}
+
+// LoadRelay reads the relay settings from the environment.
+// The error lists every missing or invalid setting, not just the first.
+func LoadRelay() (Relay, error) {
+	c, err := env.ParseAs[Relay]()
+	if err != nil {
+		return Relay{}, err
+	}
+
+	var errs []error
+	positive := []struct {
+		name  string
+		value int64
+	}{
+		{"DB_MAX_OPEN_CONNS", int64(c.DB.MaxOpenConns)},
+		{"RELAY_POLL_INTERVAL", int64(c.PollInterval)},
+		{"RELAY_BATCH_SIZE", int64(c.BatchSize)},
+		{"RELAY_PUBLISH_TIMEOUT", int64(c.PublishTimeout)},
+		{"OUTBOX_ALERT_AGE", int64(c.OutboxAlertAge)},
+		{"QUEUE_DELIVERY_LIMIT", int64(c.DeliveryLimit)},
+	}
+	for _, p := range positive {
+		if p.value <= 0 {
+			errs = append(errs, fmt.Errorf("%s must be greater than 0", p.name))
+		}
+	}
+	// One failing publish blocks a round for up to the publish timeout; that is not a stall.
+	if c.StallTimeout <= c.PublishTimeout {
+		errs = append(errs, errors.New("RELAY_STALL_TIMEOUT must be longer than RELAY_PUBLISH_TIMEOUT"))
+	}
+	// Otherwise Postgres would end the relay's transaction while it waits for a slow confirm.
+	if c.DB.IdleInTransactionTimeout <= c.PublishTimeout {
+		errs = append(errs, errors.New("DB_IDLE_IN_TRANSACTION_TIMEOUT must be longer than RELAY_PUBLISH_TIMEOUT"))
+	}
+	if err := errors.Join(errs...); err != nil {
+		return Relay{}, err
+	}
+	return c, nil
+}
+
+// LogValue lists the settings by variable name, with passwords hidden.
+func (c Relay) LogValue() slog.Value {
+	attrs := []slog.Attr{
+		slog.String("DATABASE_URL", redactURL(c.DB.URL)),
+		slog.Int("DB_MAX_OPEN_CONNS", c.DB.MaxOpenConns),
+		slog.Int("DB_MAX_IDLE_CONNS", c.DB.MaxIdleConns),
+		slog.String("DB_CONN_MAX_LIFETIME", c.DB.ConnMaxLifetime.String()),
+		slog.String("DB_IDLE_IN_TRANSACTION_TIMEOUT", c.DB.IdleInTransactionTimeout.String()),
+		slog.String("RABBITMQ_URL", redactURL(c.RabbitMQURL)),
+		slog.String("RELAY_POLL_INTERVAL", c.PollInterval.String()),
+		slog.Int("RELAY_BATCH_SIZE", c.BatchSize),
+		slog.String("RELAY_PUBLISH_TIMEOUT", c.PublishTimeout.String()),
+		slog.String("RELAY_STALL_TIMEOUT", c.StallTimeout.String()),
+		slog.String("OUTBOX_ALERT_AGE", c.OutboxAlertAge.String()),
+		slog.Int("QUEUE_DELIVERY_LIMIT", c.DeliveryLimit),
 		slog.String("LOG_LEVEL", c.LogLevel.String()),
 	}
 	return slog.GroupValue(append(attrs, c.HTTP.logAttrs()...)...)

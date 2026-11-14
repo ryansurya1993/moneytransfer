@@ -412,3 +412,41 @@ func assertLedgerConsistent(t *testing.T, db *sqlx.DB) {
 		t.Errorf("%d ledger entries, merchant version %d; want equal", len(versions), version)
 	}
 }
+
+// A transaction left open on a live connection, as after a failed rollback, holds its row locks.
+// The idle-in-transaction timeout makes Postgres end that session and release them.
+func TestIdleTransactionLosesItsLocks(t *testing.T) {
+	t.Parallel()
+	db := newDB(t, 1_000_000)
+	var name string
+	if err := db.GetContext(t.Context(), &name, "SELECT current_database()"); err != nil {
+		t.Fatal(err)
+	}
+	pool := testPool
+	pool.IdleInTransactionTimeout = 200 * time.Millisecond
+	stuckDB, err := postgres.Open(t.Context(), dbURL(name), pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stuckDB.Close() })
+
+	stuck, err := stuckDB.BeginTxx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stuck.Rollback() })
+	if _, err := stuck.ExecContext(t.Context(), "SELECT 1 FROM merchants WHERE id = 1 FOR UPDATE"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Without the timeout this waits for the stuck transaction forever.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	if _, err := db.ExecContext(ctx, "UPDATE merchants SET name = name WHERE id = 1"); err != nil {
+		t.Fatalf("update after the stuck transaction: %v", err)
+	}
+	if waited := time.Since(start); waited < 150*time.Millisecond {
+		t.Errorf("update waited only %v; the row should have been locked until the timeout", waited)
+	}
+}

@@ -5,6 +5,8 @@ x-db-env: &db-env
   POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-moneytransfer}
   POSTGRES_DB: ${POSTGRES_DB:-moneytransfer}
 
+x-database-url: &database-url postgres://${POSTGRES_USER:-moneytransfer}:${POSTGRES_PASSWORD:-moneytransfer}@postgres:5432/${POSTGRES_DB:-moneytransfer}?sslmode=disable
+
 services:
   postgres:
     image: postgres:18.7-alpine
@@ -54,11 +56,12 @@ services:
     build: .
     command: ["/usr/local/bin/api"]
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-moneytransfer}:${POSTGRES_PASSWORD:-moneytransfer}@postgres:5432/${POSTGRES_DB:-moneytransfer}?sslmode=disable
+      DATABASE_URL: *database-url
       # Unset variables arrive empty, and the api falls back to its own defaults.
       DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-}
       DB_MAX_IDLE_CONNS: ${DB_MAX_IDLE_CONNS:-}
       DB_CONN_MAX_LIFETIME: ${DB_CONN_MAX_LIFETIME:-}
+      DB_IDLE_IN_TRANSACTION_TIMEOUT: ${DB_IDLE_IN_TRANSACTION_TIMEOUT:-}
       DB_TIMEOUT: ${DB_TIMEOUT:-}
       HTTP_PORT: ${HTTP_PORT:-}
       HTTP_READ_HEADER_TIMEOUT: ${HTTP_READ_HEADER_TIMEOUT:-}
@@ -78,6 +81,47 @@ services:
     # Longer than HTTP_SHUTDOWN_TIMEOUT, so in-flight requests can finish before Docker kills the process.
     stop_grace_period: 15s
 
+  rabbitmq:
+    image: rabbitmq:4.3.7-management-alpine
+    # RabbitMQ keeps its data under the node name, which comes from the hostname.
+    # A fixed hostname keeps the queues when the container is recreated.
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-moneytransfer}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-moneytransfer}
+    ports:
+      - "${RABBITMQ_UI_PORT:-18672}:15672"
+    volumes:
+      - rabbitmqdata:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+    restart: unless-stopped
+
+  relay:
+    build: .
+    command: ["/usr/local/bin/relay"]
+    environment:
+      DATABASE_URL: *database-url
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-moneytransfer}:${RABBITMQ_PASSWORD:-moneytransfer}@rabbitmq:5672/
+      DB_IDLE_IN_TRANSACTION_TIMEOUT: ${DB_IDLE_IN_TRANSACTION_TIMEOUT:-}
+      RELAY_POLL_INTERVAL: ${RELAY_POLL_INTERVAL:-}
+      RELAY_BATCH_SIZE: ${RELAY_BATCH_SIZE:-}
+      RELAY_PUBLISH_TIMEOUT: ${RELAY_PUBLISH_TIMEOUT:-}
+      RELAY_STALL_TIMEOUT: ${RELAY_STALL_TIMEOUT:-}
+      OUTBOX_ALERT_AGE: ${OUTBOX_ALERT_AGE:-}
+      QUEUE_DELIVERY_LIMIT: ${QUEUE_DELIVERY_LIMIT:-}
+      LOG_LEVEL: ${LOG_LEVEL:-}
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 15s
+
   # Fake payout provider, reachable only inside the compose network at http://mockprovider:8080.
   mockprovider:
     build: .
@@ -95,3 +139,4 @@ services:
 
 volumes:
   pgdata:
+  rabbitmqdata:
