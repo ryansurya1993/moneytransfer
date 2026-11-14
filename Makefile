@@ -15,8 +15,8 @@ DOCKER_RUN = docker run --rm -v "$(CURDIR)":/src -w /src
 help: ## Show this help
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  %-18s %s\n", $$1, $$2}'
 
-up: ## Build and start the stack (migrations and seed run automatically)
-	docker compose up -d --build
+up: ## Build and start the stack and wait until it is healthy (migrations and seed run automatically)
+	docker compose up -d --build --wait
 
 down: ## Stop the stack and keep the data
 	docker compose down
