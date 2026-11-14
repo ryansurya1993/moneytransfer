@@ -493,6 +493,8 @@ provider's list of payouts.
   single-row check without serialization failures.
 - Rolling back the balance means a compensating refund in a later transaction, recorded as a
   `REFUND` ledger entry, not undoing the original transaction.
+- Only the service writes to its database. Direct edits are prevented by access control outside
+  the service, so ledger entries, once written, never change.
 - One currency, IDR, in whole rupiah. Banks settle IDR payouts in whole units, so every stored
   amount is an integer.
 - The maximum per transfer is 250,000,000 rupiah, the BI-FAST per-transaction limit

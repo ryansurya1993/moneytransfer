@@ -61,11 +61,10 @@ CREATE TABLE balance_entries (
     ),
     -- OPENING and DEPOSIT (a top-up) bring money from outside, so they belong to no transfer.
     CONSTRAINT balance_entries_transfer_link CHECK ((type IN ('OPENING', 'DEPOSIT')) = (transfer_id IS NULL)),
-    CONSTRAINT balance_entries_balance_after_non_negative CHECK (balance_after >= 0)
+    CONSTRAINT balance_entries_balance_after_non_negative CHECK (balance_after >= 0),
+    -- At most one debit and one refund per transfer; also the index for looking them up.
+    CONSTRAINT balance_entries_transfer_type_uniq UNIQUE (transfer_id, type)
 );
-
--- A transfer's debit and refund are looked up by transfer_id.
-CREATE INDEX balance_entries_transfer_id_idx ON balance_entries (transfer_id);
 
 CREATE TABLE outbox (
     id             BIGINT      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

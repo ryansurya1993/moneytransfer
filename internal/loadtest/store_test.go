@@ -265,6 +265,8 @@ func TestChecksCatchBrokenData(t *testing.T) {
 					SELECT 1, $1, 'REFUND', $2, balance, version
 					FROM m
 				`
+				// The schema allows one refund per transfer; the load test must still notice if a second gets in.
+				exec(t, s, "ALTER TABLE balance_entries DROP CONSTRAINT balance_entries_transfer_type_uniq")
 				exec(t, s, q, s.ids[1], refusedAmount)
 			},
 			want: []string{entries},

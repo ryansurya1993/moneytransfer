@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jmoiron/sqlx"
 
 	"github.com/ryansurya1993/moneytransfer/internal/adapter/postgres"
@@ -191,4 +192,42 @@ func TestConcurrentWorkersRefundOnce(t *testing.T) {
 	assertCount(t, db, "balance_entries WHERE type = 'REFUND'", 1)
 	assertBalance(t, db, 1_000_000, 3)
 	assertLedgerConsistent(t, db)
+}
+
+// A code path that forgets its guard still can't debit or refund a transfer twice.
+func TestLedgerHoldsOneDebitAndOneRefundPerTransfer(t *testing.T) {
+	for _, entry := range []transfer.EntryType{transfer.EntryDebit, transfer.EntryRefund} {
+		t.Run(string(entry), func(t *testing.T) {
+			t.Parallel()
+			db, id := submitOne(t)
+			if err := newProcessor(db, providerRefused).Process(t.Context(), id); err != nil {
+				t.Fatal(err)
+			}
+
+			err := postgres.NewStore(db).Do(t.Context(), func(r transfer.TxRepos) error {
+				change, err := r.Merchants().Credit(t.Context(), 1, 30_000)
+				if err != nil {
+					return err
+				}
+				amount := transfer.Amount(30_000)
+				if entry == transfer.EntryDebit {
+					amount = -amount
+				}
+				return r.Ledger().Append(t.Context(), transfer.LedgerEntry{
+					MerchantID:      1,
+					TransferID:      id,
+					Type:            entry,
+					Amount:          amount,
+					BalanceAfter:    change.Balance,
+					MerchantVersion: change.Version,
+				})
+			})
+
+			var pgErr *pgconn.PgError
+			if !errors.As(err, &pgErr) || pgErr.ConstraintName != "balance_entries_transfer_type_uniq" {
+				t.Fatalf("err = %v, want the one-entry-per-type constraint", err)
+			}
+			assertBalance(t, db, 1_000_000, 3)
+		})
+	}
 }
