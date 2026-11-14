@@ -30,7 +30,8 @@ vet: ## Run go vet
 test: ## Run unit tests
 	go test ./...
 
-# One package at a time: containers starting together can fail Docker detection on Windows.
+# One package at a time: test packages share one testcontainers cleanup container, and a package
+# that finds it still starting fails instead of waiting.
 test-integration: ## Run integration tests against real Postgres and RabbitMQ (needs Docker)
 	go test -tags=integration -p 1 ./...
 

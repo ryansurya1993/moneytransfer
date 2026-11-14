@@ -6,6 +6,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +29,13 @@ func TestMain(m *testing.M) {
 
 func run(m *testing.M) int {
 	ctx := context.Background()
+	// Same as in the postgres adapter's tests: a busy Docker pipe on Windows must not look like no Docker.
+	if runtime.GOOS == "windows" && os.Getenv("DOCKER_HOST") == "" {
+		if err := os.Setenv("DOCKER_HOST", "npipe:////./pipe/docker_engine"); err != nil {
+			log.Printf("set DOCKER_HOST: %v", err)
+			return 1
+		}
+	}
 	container, err := tcrabbitmq.Run(ctx, "rabbitmq:4.3.7-management-alpine")
 	if err != nil {
 		log.Printf("start rabbitmq container: %v", err)

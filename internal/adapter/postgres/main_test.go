@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -42,6 +43,16 @@ func TestMain(m *testing.M) {
 
 func run(m *testing.M) int {
 	ctx := context.Background()
+
+	// On Windows, testcontainers looks for Docker by stat-ing its named pipe, which fails with
+	// "All pipe instances are busy" while another program is connecting to Docker at the same moment.
+	// With DOCKER_HOST set (to the pipe it would find anyway) it dials instead, and a dial waits.
+	if runtime.GOOS == "windows" && os.Getenv("DOCKER_HOST") == "" {
+		if err := os.Setenv("DOCKER_HOST", "npipe:////./pipe/docker_engine"); err != nil {
+			log.Printf("set DOCKER_HOST: %v", err)
+			return 1
+		}
+	}
 
 	container, err := tcpostgres.Run(ctx, "postgres:18.7-alpine",
 		tcpostgres.WithDatabase("postgres"),
