@@ -338,7 +338,8 @@ dead-letter queue.
 The integration tests cover the parts where money can go wrong: concurrent deductions on one
 balance, concurrent duplicate keys, rollback when a step fails or panics, commit errors, a refund
 that two workers race for, relays that compete for the same rows, and a poison message that
-reaches the dead-letter queue after exactly the configured number of redeliveries.
+reaches the dead-letter queue after exactly the configured number of redeliveries. The burst test's
+own checks are tested too: each must fail on deliberately damaged data.
 
 ### 6. Top up or reset
 
@@ -389,6 +390,7 @@ UNKNOWN, or PENDING/PROCESSING whose message was lost -> reconciler -> PROCESSIN
 | `internal/outbox` | Relay loop |
 | `internal/mockprovider` | The fake bank |
 | `internal/loadtest` | Burst test and checks |
+| `internal/pgtest` | Postgres container for integration tests; never in a binary (enforced by the linter) |
 | `internal/config`, `internal/logging`, `internal/health` | Env config, correlation id in logs, health endpoints |
 | `cmd/*` | One `main` per binary, wiring only |
 | `migrations/` | Schema (golang-migrate) |

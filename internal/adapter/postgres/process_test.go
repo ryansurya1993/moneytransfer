@@ -52,7 +52,7 @@ func newProcessor(db *sqlx.DB, p transfer.Provider) *transfer.Processor {
 // submitOne creates a 30,000 transfer against a balance of 1,000,000.
 func submitOne(t *testing.T) (*sqlx.DB, uuid.UUID) {
 	t.Helper()
-	db := newDB(t, 1_000_000)
+	db := pg.NewDB(t, 1_000_000)
 	res, err := newService(db).Submit(t.Context(), request("k1", 30_000))
 	if err != nil {
 		t.Fatal(err)
@@ -157,7 +157,7 @@ func TestProcessSkipsAFinishedTransfer(t *testing.T) {
 
 func TestProcessUnknownTransferIsNotFound(t *testing.T) {
 	t.Parallel()
-	db := newDB(t, 1_000_000)
+	db := pg.NewDB(t, 1_000_000)
 
 	err := newProcessor(db, providerPaid).Process(t.Context(), uuid.New())
 

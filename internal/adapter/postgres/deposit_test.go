@@ -13,7 +13,7 @@ import (
 
 func TestDepositWritesALedgerEntryWithoutTransfer(t *testing.T) {
 	t.Parallel()
-	db := newDB(t, 1_000_000)
+	db := pg.NewDB(t, 1_000_000)
 	ctx := context.Background()
 
 	if _, err := newService(db).Submit(ctx, request("k1", 150_000)); err != nil {

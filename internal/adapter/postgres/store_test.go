@@ -18,6 +18,7 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"github.com/ryansurya1993/moneytransfer/internal/adapter/postgres"
+	"github.com/ryansurya1993/moneytransfer/internal/pgtest"
 	"github.com/ryansurya1993/moneytransfer/internal/transfer"
 )
 
@@ -45,7 +46,7 @@ func request(key string, amount transfer.Amount) transfer.SubmitRequest {
 
 func TestSubmitStoresTransferOutboxDebitAndLedger(t *testing.T) {
 	t.Parallel()
-	db := newDB(t, 1_000_000)
+	db := pg.NewDB(t, 1_000_000)
 	ctx := context.Background()
 
 	res, err := newService(db).Submit(ctx, request("k1", 150_000))
@@ -84,7 +85,7 @@ func TestSubmitStoresTransferOutboxDebitAndLedger(t *testing.T) {
 
 func TestSubmitWithoutOptionalFieldsRoundTrips(t *testing.T) {
 	t.Parallel()
-	db := newDB(t, 1_000_000)
+	db := pg.NewDB(t, 1_000_000)
 	ctx := context.Background()
 
 	req := request("k1", 1_000)
@@ -105,7 +106,7 @@ func TestSubmitWithoutOptionalFieldsRoundTrips(t *testing.T) {
 
 func TestSubmitInsufficientBalanceRollsBackEarlierInserts(t *testing.T) {
 	t.Parallel()
-	db := newDB(t, 100_000)
+	db := pg.NewDB(t, 100_000)
 
 	_, err := newService(db).Submit(context.Background(), request("k1", 150_000))
 	if !errors.Is(err, transfer.ErrInsufficientBalance) {
@@ -120,7 +121,7 @@ func TestSubmitInsufficientBalanceRollsBackEarlierInserts(t *testing.T) {
 
 func TestSubmitReplayAndKeyReuse(t *testing.T) {
 	t.Parallel()
-	db := newDB(t, 1_000_000)
+	db := pg.NewDB(t, 1_000_000)
 	svc := newService(db)
 	ctx := context.Background()
 
@@ -148,7 +149,7 @@ func TestSubmitReplayAndKeyReuse(t *testing.T) {
 
 func TestGetUnknownTransfer(t *testing.T) {
 	t.Parallel()
-	db := newDB(t, 1_000_000)
+	db := pg.NewDB(t, 1_000_000)
 
 	_, err := postgres.NewStore(db).ByID(context.Background(), uuid.New())
 	if !errors.Is(err, transfer.ErrNotFound) {
@@ -158,7 +159,7 @@ func TestGetUnknownTransfer(t *testing.T) {
 
 func TestDoRollsBackAndRepanics(t *testing.T) {
 	t.Parallel()
-	db := newDB(t, 1_000_000)
+	db := pg.NewDB(t, 1_000_000)
 	store := postgres.NewStore(db)
 
 	recovered := func() (p any) {
@@ -181,7 +182,7 @@ func TestDoRollsBackAndRepanics(t *testing.T) {
 
 func TestDoReturnsCommitError(t *testing.T) {
 	t.Parallel()
-	db := newDB(t, 1_000_000)
+	db := pg.NewDB(t, 1_000_000)
 	ctx := context.Background()
 
 	// A deferred constraint is only checked at COMMIT, so this makes the commit itself fail.
@@ -215,7 +216,7 @@ func TestDoReturnsCommitError(t *testing.T) {
 
 func TestDoAfterCancelReturnsOnlyTheCallbackError(t *testing.T) {
 	t.Parallel()
-	db := newDB(t, 1_000_000)
+	db := pg.NewDB(t, 1_000_000)
 	ctx, cancel := context.WithCancel(context.Background())
 	stop := errors.New("stop")
 
@@ -250,7 +251,7 @@ func TestConcurrentSubmitsNeverOverdraw(t *testing.T) {
 		requests = 100
 		fits     = initial / amount // 33
 	)
-	db := newDB(t, initial)
+	db := pg.NewDB(t, initial)
 	svc := newService(db)
 
 	var (
@@ -294,7 +295,7 @@ func TestConcurrentSubmitsNeverOverdraw(t *testing.T) {
 func TestConcurrentDuplicatesCreateOneTransfer(t *testing.T) {
 	t.Parallel()
 	const requests = 20
-	db := newDB(t, 1_000_000)
+	db := pg.NewDB(t, 1_000_000)
 	svc := newService(db)
 
 	var (
@@ -417,14 +418,14 @@ func assertLedgerConsistent(t *testing.T, db *sqlx.DB) {
 // The idle-in-transaction timeout makes Postgres end that session and release them.
 func TestIdleTransactionLosesItsLocks(t *testing.T) {
 	t.Parallel()
-	db := newDB(t, 1_000_000)
+	db := pg.NewDB(t, 1_000_000)
 	var name string
 	if err := db.GetContext(t.Context(), &name, "SELECT current_database()"); err != nil {
 		t.Fatal(err)
 	}
-	pool := testPool
+	pool := pgtest.PoolConfig()
 	pool.IdleInTransactionTimeout = 200 * time.Millisecond
-	stuckDB, err := postgres.Open(t.Context(), dbURL(name), pool)
+	stuckDB, err := postgres.Open(t.Context(), pg.URL(name), pool)
 	if err != nil {
 		t.Fatal(err)
 	}

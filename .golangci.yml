@@ -41,6 +41,15 @@ linters:
               desc: "configuration is read in internal/config and passed in"
             - pkg: github.com/ryansurya1993/moneytransfer/internal/adapter
               desc: "adapters depend on the core, never the other way round"
+        # Starts containers for integration tests; it must never end up in a binary.
+        test-only:
+          list-mode: lax
+          files:
+            - "$all"
+            - "!$test"
+          deny:
+            - pkg: github.com/ryansurya1993/moneytransfer/internal/pgtest
+              desc: "test infrastructure, import it from _test.go files only"
 
     rowserrcheck:
       packages:

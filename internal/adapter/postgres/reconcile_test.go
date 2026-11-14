@@ -36,7 +36,7 @@ func newReconciler(db *sqlx.DB) *transfer.Reconciler {
 // submitKeys creates one transfer per key against a balance of 1,000,000 and returns their IDs in order.
 func submitKeys(t *testing.T, keys ...string) (*sqlx.DB, []uuid.UUID) {
 	t.Helper()
-	db := newDB(t, 1_000_000)
+	db := pg.NewDB(t, 1_000_000)
 	svc := newService(db)
 	ids := make([]uuid.UUID, len(keys))
 	for i, k := range keys {
@@ -204,7 +204,7 @@ func TestExhaustedListsTransfersOutOfTries(t *testing.T) {
 		t.Errorf("oldest unchanged for %v, want about 30m", waited)
 	}
 
-	none, err := postgres.NewStore(newDB(t, 1)).Exhausted(t.Context(), reconcileAfter, reconcileMax, 10)
+	none, err := postgres.NewStore(pg.NewDB(t, 1)).Exhausted(t.Context(), reconcileAfter, reconcileMax, 10)
 	if err != nil || none.Count != 0 || none.IDs != nil {
 		t.Errorf("empty database: got %+v, %v; want nothing", none, err)
 	}

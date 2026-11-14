@@ -30,7 +30,7 @@ func submitN(t *testing.T, db *sqlx.DB, n int) {
 
 func TestPublishBatchPublishesInOrderAndMarks(t *testing.T) {
 	t.Parallel()
-	db := newDB(t, 1_000_000)
+	db := pg.NewDB(t, 1_000_000)
 	submitN(t, db, 3)
 	store := postgres.NewStore(db)
 
@@ -59,7 +59,7 @@ func TestPublishBatchPublishesInOrderAndMarks(t *testing.T) {
 
 func TestPublishBatchKeepsConfirmedEventsOnFailure(t *testing.T) {
 	t.Parallel()
-	db := newDB(t, 1_000_000)
+	db := pg.NewDB(t, 1_000_000)
 	submitN(t, db, 3)
 	store := postgres.NewStore(db)
 	brokerDown := errors.New("broker down")
@@ -93,7 +93,7 @@ func TestPublishBatchKeepsConfirmedEventsOnFailure(t *testing.T) {
 
 func TestPublishBatchRespectsLimit(t *testing.T) {
 	t.Parallel()
-	db := newDB(t, 1_000_000)
+	db := pg.NewDB(t, 1_000_000)
 	submitN(t, db, 5)
 	store := postgres.NewStore(db)
 
@@ -106,7 +106,7 @@ func TestPublishBatchRespectsLimit(t *testing.T) {
 
 func TestConcurrentRelaysPublishEachEventOnce(t *testing.T) {
 	t.Parallel()
-	db := newDB(t, 1_000_000)
+	db := pg.NewDB(t, 1_000_000)
 	submitN(t, db, 40)
 	store := postgres.NewStore(db)
 
@@ -148,7 +148,7 @@ func TestConcurrentRelaysPublishEachEventOnce(t *testing.T) {
 
 func TestBacklogReportsOldestUnsent(t *testing.T) {
 	t.Parallel()
-	db := newDB(t, 1_000_000)
+	db := pg.NewDB(t, 1_000_000)
 	store := postgres.NewStore(db)
 	assertBacklog(t, store, 0)
 
