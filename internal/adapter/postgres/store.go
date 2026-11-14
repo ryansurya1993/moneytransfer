@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
 
@@ -59,7 +60,7 @@ func NewStore(db *sqlx.DB) *Store {
 func (s *Store) Do(ctx context.Context, fn func(r transfer.TxRepos) error) error {
 	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
+		return fmt.Errorf("begin transaction: %w", wrapUnavailable(err))
 	}
 	defer func() {
 		if p := recover(); p != nil {
@@ -89,3 +90,13 @@ func (r txRepos) Transfers() transfer.TransferWriter { return transferWriter(r) 
 func (r txRepos) Outbox() transfer.OutboxWriter      { return outboxWriter(r) }
 func (r txRepos) Merchants() transfer.BalanceDebiter { return merchantRepo(r) }
 func (r txRepos) Ledger() transfer.LedgerWriter      { return ledgerWriter(r) }
+
+// wrapUnavailable marks a failed connection attempt with transfer.ErrUnavailable,
+// so callers can tell an outage from a bug.
+func wrapUnavailable(err error) error {
+	var connErr *pgconn.ConnectError
+	if errors.As(err, &connErr) {
+		return fmt.Errorf("%w: %w", transfer.ErrUnavailable, err)
+	}
+	return err
+}

@@ -3,6 +3,7 @@ module github.com/ryansurya1993/moneytransfer
 go 1.26.5
 
 require (
+	github.com/caarlos0/env/v11 v11.4.2
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/jmoiron/sqlx v1.4.0

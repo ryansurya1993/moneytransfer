@@ -35,6 +35,8 @@ linters:
               desc: "database access belongs in an adapter"
             - pkg: github.com/jackc/pgx
               desc: "database access belongs in an adapter"
+            - pkg: github.com/caarlos0/env
+              desc: "configuration is read in internal/config and passed in"
             - pkg: github.com/ryansurya1993/moneytransfer/internal/adapter
               desc: "adapters depend on the core, never the other way round"
 

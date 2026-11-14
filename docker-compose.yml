@@ -50,5 +50,33 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  api:
+    build: .
+    command: ["/usr/local/bin/api"]
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-moneytransfer}:${POSTGRES_PASSWORD:-moneytransfer}@postgres:5432/${POSTGRES_DB:-moneytransfer}?sslmode=disable
+      # Unset variables arrive empty, and the api falls back to its own defaults.
+      DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-}
+      DB_MAX_IDLE_CONNS: ${DB_MAX_IDLE_CONNS:-}
+      DB_CONN_MAX_LIFETIME: ${DB_CONN_MAX_LIFETIME:-}
+      DB_TIMEOUT: ${DB_TIMEOUT:-}
+      HTTP_PORT: ${HTTP_PORT:-}
+      HTTP_READ_HEADER_TIMEOUT: ${HTTP_READ_HEADER_TIMEOUT:-}
+      HTTP_READ_TIMEOUT: ${HTTP_READ_TIMEOUT:-}
+      HTTP_WRITE_TIMEOUT: ${HTTP_WRITE_TIMEOUT:-}
+      HTTP_IDLE_TIMEOUT: ${HTTP_IDLE_TIMEOUT:-}
+      HTTP_SHUTDOWN_TIMEOUT: ${HTTP_SHUTDOWN_TIMEOUT:-}
+      MAX_TRANSFER_AMOUNT: ${MAX_TRANSFER_AMOUNT:-}
+      MERCHANT_ID: ${MERCHANT_ID:-}
+      LOG_LEVEL: ${LOG_LEVEL:-}
+    ports:
+      - "${API_PORT:-18080}:${HTTP_PORT:-8080}"
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    # Longer than HTTP_SHUTDOWN_TIMEOUT, so in-flight requests can finish before Docker kills the process.
+    stop_grace_period: 15s
+
 volumes:
   pgdata:

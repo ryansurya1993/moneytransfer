@@ -18,6 +18,9 @@ var (
 
 	// ErrDuplicateIdempotencyKey is returned by TransferWriter.Create when the key is already taken.
 	ErrDuplicateIdempotencyKey = errors.New("duplicate idempotency key")
+
+	// ErrUnavailable means the store can't be reached. The request can be retried later.
+	ErrUnavailable = errors.New("store unavailable")
 )
 
 // FieldError is an invalid request field, named as in the API.

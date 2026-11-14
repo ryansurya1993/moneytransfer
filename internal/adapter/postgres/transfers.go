@@ -123,7 +123,7 @@ func (s *Store) getTransfer(ctx context.Context, q string, args ...any) (transfe
 		return transfer.Transfer{}, transfer.ErrNotFound
 	}
 	if err != nil {
-		return transfer.Transfer{}, fmt.Errorf("select transfer: %w", err)
+		return transfer.Transfer{}, fmt.Errorf("select transfer: %w", wrapUnavailable(err))
 	}
 	return row.toDomain(), nil
 }
