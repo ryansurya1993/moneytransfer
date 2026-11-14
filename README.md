@@ -465,6 +465,10 @@ DNS view changes during a failing request it gives up instead of trying the othe
 `504` per crashed replica in every test run). Errors HAProxy answers itself use the same problem
 format as the api.
 
+HAProxy waits at most 10s for a replica, the same as the api's `HTTP_WRITE_TIMEOUT`, after which
+the api can't answer anyway. When changing one, change the other (`deploy/haproxy/haproxy.cfg`);
+they aren't one setting because HAProxy can't parse Go durations such as `1m30s`.
+
 **The load test reads results from Postgres.**
 The guarantees are about stored money, and the API has no balance endpoint (an unauthenticated
 one would be a hole). The checks are plain SQL, the same queries as in step 4.
