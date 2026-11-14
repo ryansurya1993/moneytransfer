@@ -163,6 +163,95 @@ func (c Relay) LogValue() slog.Value {
 	return slog.GroupValue(append(attrs, c.HTTP.logAttrs()...)...)
 }
 
+// Worker holds the settings of the worker binary.
+type Worker struct {
+	DB   DB
+	HTTP HTTP
+
+	DBTimeout           time.Duration `env:"DB_TIMEOUT" envDefault:"3s"`
+	RabbitMQURL         string        `env:"RABBITMQ_URL,required,notEmpty"`
+	DeliveryLimit       int           `env:"QUEUE_DELIVERY_LIMIT" envDefault:"5"`
+	Concurrency         int           `env:"WORKER_CONCURRENCY" envDefault:"20"`
+	ShutdownTimeout     time.Duration `env:"WORKER_SHUTDOWN_TIMEOUT" envDefault:"20s"`
+	ProviderURL         string        `env:"PROVIDER_URL,required,notEmpty"`
+	ProviderTimeout     time.Duration `env:"PROVIDER_TIMEOUT" envDefault:"3s"`
+	ProviderMaxAttempts int           `env:"PROVIDER_MAX_ATTEMPTS" envDefault:"3"`
+	ProviderBackoffBase time.Duration `env:"PROVIDER_BACKOFF_BASE" envDefault:"1s"`
+	ProviderBackoffMax  time.Duration `env:"PROVIDER_BACKOFF_MAX" envDefault:"4s"`
+	LogLevel            slog.Level    `env:"LOG_LEVEL" envDefault:"info"`
+}
+
+// LoadWorker reads the worker settings from the environment.
+// The error lists every missing or invalid setting, not just the first.
+func LoadWorker() (Worker, error) {
+	c, err := env.ParseAs[Worker]()
+	if err != nil {
+		return Worker{}, err
+	}
+
+	var errs []error
+	positive := []struct {
+		name  string
+		value int64
+	}{
+		{"DB_MAX_OPEN_CONNS", int64(c.DB.MaxOpenConns)},
+		{"DB_IDLE_IN_TRANSACTION_TIMEOUT", int64(c.DB.IdleInTransactionTimeout)},
+		{"DB_TIMEOUT", int64(c.DBTimeout)},
+		{"QUEUE_DELIVERY_LIMIT", int64(c.DeliveryLimit)},
+		{"WORKER_CONCURRENCY", int64(c.Concurrency)},
+		{"PROVIDER_TIMEOUT", int64(c.ProviderTimeout)},
+		{"PROVIDER_MAX_ATTEMPTS", int64(c.ProviderMaxAttempts)},
+		{"PROVIDER_BACKOFF_BASE", int64(c.ProviderBackoffBase)},
+	}
+	for _, p := range positive {
+		if p.value <= 0 {
+			errs = append(errs, fmt.Errorf("%s must be greater than 0", p.name))
+		}
+	}
+	if c.ProviderBackoffMax < c.ProviderBackoffBase {
+		errs = append(errs, errors.New("PROVIDER_BACKOFF_MAX must not be less than PROVIDER_BACKOFF_BASE"))
+	}
+	// A transfer cut off by shutdown is safe, but it waits until its message comes back.
+	// A normal shutdown should let a full round of provider retries finish.
+	if c.ShutdownTimeout <= c.maxPayoutTime() {
+		errs = append(errs, fmt.Errorf("WORKER_SHUTDOWN_TIMEOUT must be longer than the longest payout round (%s)", c.maxPayoutTime()))
+	}
+	if err := errors.Join(errs...); err != nil {
+		return Worker{}, err
+	}
+	return c, nil
+}
+
+// maxPayoutTime is the longest a payout round can take.
+// That is every attempt timing out, with the longest wait between attempts.
+func (c Worker) maxPayoutTime() time.Duration {
+	attempts := time.Duration(c.ProviderMaxAttempts)
+	return attempts*c.ProviderTimeout + (attempts-1)*c.ProviderBackoffMax
+}
+
+// LogValue lists the settings by variable name, with passwords hidden.
+func (c Worker) LogValue() slog.Value {
+	attrs := []slog.Attr{
+		slog.String("DATABASE_URL", redactURL(c.DB.URL)),
+		slog.Int("DB_MAX_OPEN_CONNS", c.DB.MaxOpenConns),
+		slog.Int("DB_MAX_IDLE_CONNS", c.DB.MaxIdleConns),
+		slog.String("DB_CONN_MAX_LIFETIME", c.DB.ConnMaxLifetime.String()),
+		slog.String("DB_IDLE_IN_TRANSACTION_TIMEOUT", c.DB.IdleInTransactionTimeout.String()),
+		slog.String("DB_TIMEOUT", c.DBTimeout.String()),
+		slog.String("RABBITMQ_URL", redactURL(c.RabbitMQURL)),
+		slog.Int("QUEUE_DELIVERY_LIMIT", c.DeliveryLimit),
+		slog.Int("WORKER_CONCURRENCY", c.Concurrency),
+		slog.String("WORKER_SHUTDOWN_TIMEOUT", c.ShutdownTimeout.String()),
+		slog.String("PROVIDER_URL", redactURL(c.ProviderURL)),
+		slog.String("PROVIDER_TIMEOUT", c.ProviderTimeout.String()),
+		slog.Int("PROVIDER_MAX_ATTEMPTS", c.ProviderMaxAttempts),
+		slog.String("PROVIDER_BACKOFF_BASE", c.ProviderBackoffBase.String()),
+		slog.String("PROVIDER_BACKOFF_MAX", c.ProviderBackoffMax.String()),
+		slog.String("LOG_LEVEL", c.LogLevel.String()),
+	}
+	return slog.GroupValue(append(attrs, c.HTTP.logAttrs()...)...)
+}
+
 // MockProvider holds the settings of the fake payout provider.
 type MockProvider struct {
 	HTTP HTTP

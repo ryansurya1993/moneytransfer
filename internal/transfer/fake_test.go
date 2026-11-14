@@ -18,12 +18,14 @@ type state struct {
 	transfers map[uuid.UUID]transfer.Transfer
 	outbox    []transfer.OutboxEvent
 	ledger    []transfer.LedgerEntry
+	outcomes  []transfer.Outcome
 }
 
 func (s state) clone() state {
 	s.transfers = maps.Clone(s.transfers)
 	s.outbox = slices.Clone(s.outbox)
 	s.ledger = slices.Clone(s.ledger)
+	s.outcomes = slices.Clone(s.outcomes)
 	return s
 }
 
@@ -34,6 +36,7 @@ type fakeDB struct {
 	calls     []string // repository calls, in order, including rolled-back ones
 	failAt    string   // repository call that returns failErr
 	failErr   error
+	failLeft  int   // when > 0, failAt fails only this many times
 	commitErr error // returned instead of committing
 	now       time.Time
 }
@@ -82,13 +85,19 @@ type fakeTx struct {
 
 func (tx *fakeTx) Transfers() transfer.TransferWriter { return tx }
 func (tx *fakeTx) Outbox() transfer.OutboxWriter      { return tx }
-func (tx *fakeTx) Merchants() transfer.BalanceDebiter { return tx }
+func (tx *fakeTx) Merchants() transfer.BalanceUpdater { return tx }
 func (tx *fakeTx) Ledger() transfer.LedgerWriter      { return tx }
 
 // call records the call and reports the injected failure, if any.
 func (tx *fakeTx) call(name string) error {
 	tx.db.calls = append(tx.db.calls, name)
 	if tx.db.failAt == name {
+		if tx.db.failLeft > 0 {
+			tx.db.failLeft--
+			if tx.db.failLeft == 0 {
+				tx.db.failAt = ""
+			}
+		}
 		return tx.db.failErr
 	}
 	return nil
@@ -134,4 +143,43 @@ func (tx *fakeTx) Add(_ context.Context, e transfer.OutboxEvent) error {
 	}
 	tx.s.outbox = append(tx.s.outbox, e)
 	return nil
+}
+
+func (tx *fakeTx) Claim(_ context.Context, id uuid.UUID) (transfer.Transfer, error) {
+	if err := tx.call("transfers.Claim"); err != nil {
+		return transfer.Transfer{}, err
+	}
+	t, ok := tx.s.transfers[id]
+	switch {
+	case !ok:
+		return transfer.Transfer{}, transfer.ErrNotFound
+	case t.Status != transfer.StatusPending && t.Status != transfer.StatusProcessing:
+		return transfer.Transfer{}, transfer.ErrAlreadyFinal
+	}
+	t.Status = transfer.StatusProcessing
+	tx.s.transfers[id] = t
+	return t, nil
+}
+
+func (tx *fakeTx) Finish(_ context.Context, id uuid.UUID, o transfer.Outcome) (bool, error) {
+	if err := tx.call("transfers.Finish"); err != nil {
+		return false, err
+	}
+	t := tx.s.transfers[id]
+	if t.Status != transfer.StatusProcessing {
+		return false, nil
+	}
+	t.Status, t.FailureCode = o.Status, o.FailureCode
+	tx.s.transfers[id] = t
+	tx.s.outcomes = append(tx.s.outcomes, o)
+	return true, nil
+}
+
+func (tx *fakeTx) Credit(_ context.Context, _ transfer.MerchantID, amount transfer.Amount) (transfer.BalanceChange, error) {
+	if err := tx.call("merchants.Credit"); err != nil {
+		return transfer.BalanceChange{}, err
+	}
+	tx.s.balance += amount
+	tx.s.version++
+	return transfer.BalanceChange{Balance: tx.s.balance, Version: tx.s.version}, nil
 }

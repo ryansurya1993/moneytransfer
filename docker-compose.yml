@@ -122,6 +122,34 @@ services:
     restart: unless-stopped
     stop_grace_period: 15s
 
+  worker:
+    build: .
+    command: ["/usr/local/bin/worker"]
+    environment:
+      DATABASE_URL: *database-url
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-moneytransfer}:${RABBITMQ_PASSWORD:-moneytransfer}@rabbitmq:5672/
+      PROVIDER_URL: http://mockprovider:8080
+      DB_IDLE_IN_TRANSACTION_TIMEOUT: ${DB_IDLE_IN_TRANSACTION_TIMEOUT:-}
+      DB_TIMEOUT: ${DB_TIMEOUT:-}
+      QUEUE_DELIVERY_LIMIT: ${QUEUE_DELIVERY_LIMIT:-}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-}
+      WORKER_SHUTDOWN_TIMEOUT: ${WORKER_SHUTDOWN_TIMEOUT:-}
+      PROVIDER_TIMEOUT: ${PROVIDER_TIMEOUT:-}
+      PROVIDER_MAX_ATTEMPTS: ${PROVIDER_MAX_ATTEMPTS:-}
+      PROVIDER_BACKOFF_BASE: ${PROVIDER_BACKOFF_BASE:-}
+      PROVIDER_BACKOFF_MAX: ${PROVIDER_BACKOFF_MAX:-}
+      LOG_LEVEL: ${LOG_LEVEL:-}
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+      mockprovider:
+        condition: service_started
+    restart: unless-stopped
+    # Longer than WORKER_SHUTDOWN_TIMEOUT, so payouts in progress can finish.
+    stop_grace_period: 30s
+
   # Fake payout provider, reachable only inside the compose network at http://mockprovider:8080.
   mockprovider:
     build: .

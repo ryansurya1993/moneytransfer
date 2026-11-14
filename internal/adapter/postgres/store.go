@@ -3,9 +3,13 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -78,6 +82,7 @@ func (s *Store) Do(ctx context.Context, fn func(r transfer.TxRepos) error) error
 	}()
 
 	if err := fn(txRepos{tx: tx}); err != nil {
+		err = wrapUnavailable(err)
 		// A canceled context has already rolled the transaction back.
 		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
 			return errors.Join(err, fmt.Errorf("rollback: %w", rbErr))
@@ -85,7 +90,7 @@ func (s *Store) Do(ctx context.Context, fn func(r transfer.TxRepos) error) error
 		return err
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit: %w", err)
+		return fmt.Errorf("commit: %w", wrapUnavailable(err))
 	}
 	return nil
 }
@@ -96,15 +101,29 @@ type txRepos struct {
 
 func (r txRepos) Transfers() transfer.TransferWriter { return transferWriter(r) }
 func (r txRepos) Outbox() transfer.OutboxWriter      { return outboxWriter(r) }
-func (r txRepos) Merchants() transfer.BalanceDebiter { return merchantRepo(r) }
+func (r txRepos) Merchants() transfer.BalanceUpdater { return merchantRepo(r) }
 func (r txRepos) Ledger() transfer.LedgerWriter      { return ledgerWriter(r) }
 
-// wrapUnavailable marks a failed connection attempt with transfer.ErrUnavailable,
-// so callers can tell an outage from a bug.
+// wrapUnavailable marks a lost or refused connection with transfer.ErrUnavailable.
+// Callers can then tell an outage from a bug.
 func wrapUnavailable(err error) error {
-	var connErr *pgconn.ConnectError
-	if errors.As(err, &connErr) {
+	if err != nil && !errors.Is(err, transfer.ErrUnavailable) && isConnectionLost(err) {
 		return fmt.Errorf("%w: %w", transfer.ErrUnavailable, err)
 	}
 	return err
+}
+
+// isConnectionLost reports whether err comes from not reaching the server or losing the connection.
+// A restart, for one, ends pooled connections with SQLSTATE 57P01, not a connect error.
+func isConnectionLost(err error) bool {
+	var connErr *pgconn.ConnectError
+	if errors.As(err, &connErr) {
+		return true
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		// Class 08 is a connection exception; 57P is the server shutting down or not accepting connections.
+		return strings.HasPrefix(pgErr.Code, "08") || strings.HasPrefix(pgErr.Code, "57P")
+	}
+	return errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, net.ErrClosed) || errors.Is(err, driver.ErrBadConn)
 }

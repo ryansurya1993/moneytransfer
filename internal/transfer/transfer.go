@@ -21,8 +21,31 @@ type MerchantID int64
 // Status is the lifecycle state of a transfer.
 type Status string
 
-// StatusPending means the balance is deducted and the payout hasn't started.
-const StatusPending Status = "PENDING"
+const (
+	// StatusPending means the balance is deducted and the payout hasn't started.
+	StatusPending Status = "PENDING"
+	// StatusProcessing means a worker has claimed the transfer and is talking to the provider.
+	StatusProcessing Status = "PROCESSING"
+	// StatusSuccess means the provider paid out.
+	StatusSuccess Status = "SUCCESS"
+	// StatusFailed means the provider refused the payout and the amount was refunded.
+	StatusFailed Status = "FAILED"
+	// StatusUnknown means the provider never gave a definite answer.
+	// The money may have left, so nothing is refunded until someone finds out.
+	StatusUnknown Status = "UNKNOWN"
+)
+
+// FailureCode says why the provider refused a payout.
+// A provider's own codes are mapped to these, so changing providers doesn't change the API.
+type FailureCode string
+
+// Failure codes a merchant can see.
+const (
+	FailureInvalidAccount  FailureCode = "INVALID_ACCOUNT"
+	FailureAccountClosed   FailureCode = "ACCOUNT_CLOSED"
+	FailureInvalidBankCode FailureCode = "INVALID_BANK_CODE"
+	FailureRejectedByBank  FailureCode = "REJECTED_BY_BANK"
+)
 
 // Transfer is a payout from a merchant's balance to a bank account.
 type Transfer struct {
@@ -38,6 +61,7 @@ type Transfer struct {
 	ReferenceID       string // merchant's own reference, optional, not unique
 	Description       string // optional
 	Status            Status
+	FailureCode       FailureCode // set only when Status is StatusFailed
 	CorrelationID     string
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
@@ -53,15 +77,19 @@ type BalanceChange struct {
 // EntryType is the kind of ledger entry.
 type EntryType string
 
-// EntryDebit records money taken from the balance for a transfer.
-const EntryDebit EntryType = "DEBIT"
+const (
+	// EntryDebit records money taken from the balance for a transfer.
+	EntryDebit EntryType = "DEBIT"
+	// EntryRefund returns the amount of a failed transfer to the balance.
+	EntryRefund EntryType = "REFUND"
+)
 
 // LedgerEntry records one balance change. Entries are never updated.
 type LedgerEntry struct {
 	MerchantID      MerchantID
 	TransferID      uuid.UUID
 	Type            EntryType
-	Amount          Amount // signed: negative for a debit
+	Amount          Amount // signed: negative for a debit, positive for a refund
 	BalanceAfter    Amount
 	MerchantVersion int64
 }

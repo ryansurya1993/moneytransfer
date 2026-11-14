@@ -304,3 +304,66 @@ func TestIdleInTransactionTimeout(t *testing.T) {
 		})
 	}
 }
+
+func setWorkerEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("DATABASE_URL", dbURL)
+	t.Setenv("RABBITMQ_URL", amqpURL)
+	t.Setenv("PROVIDER_URL", "http://mockprovider:8080")
+}
+
+func TestLoadWorker(t *testing.T) {
+	setWorkerEnv(t)
+
+	c, err := config.LoadWorker()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Concurrency != 20 || c.ShutdownTimeout != 20*time.Second || c.ProviderMaxAttempts != 3 {
+		t.Errorf("concurrency %d, shutdown %v, attempts %d; want 20, 20s, 3", c.Concurrency, c.ShutdownTimeout, c.ProviderMaxAttempts)
+	}
+	if c.ProviderTimeout != 3*time.Second || c.ProviderBackoffBase != time.Second || c.ProviderBackoffMax != 4*time.Second {
+		t.Errorf("provider timeout %v, backoff %v-%v; want 3s, 1s-4s", c.ProviderTimeout, c.ProviderBackoffBase, c.ProviderBackoffMax)
+	}
+}
+
+func TestLoadWorkerErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     map[string]string
+		wantErr string
+	}{
+		{name: "provider url missing", env: map[string]string{"PROVIDER_URL": ""}, wantErr: "PROVIDER_URL"},
+		{name: "no concurrency", env: map[string]string{"WORKER_CONCURRENCY": "0"}, wantErr: "WORKER_CONCURRENCY must be greater than 0"},
+		{name: "backoff max below base", env: map[string]string{"PROVIDER_BACKOFF_MAX": "500ms"}, wantErr: "PROVIDER_BACKOFF_MAX must not be less than PROVIDER_BACKOFF_BASE"},
+		{
+			// 3 attempts x 3s + 2 waits x 4s = 17s.
+			name:    "shutdown shorter than a payout round",
+			env:     map[string]string{"WORKER_SHUTDOWN_TIMEOUT": "17s"},
+			wantErr: "WORKER_SHUTDOWN_TIMEOUT must be longer than the longest payout round (17s)",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setWorkerEnv(t)
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+
+			_, err := config.LoadWorker()
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("got error %v, want one containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestWorkerLogValueHidesPasswords(t *testing.T) {
+	var buf bytes.Buffer
+	c := config.Worker{DB: config.DB{URL: dbURL}, RabbitMQURL: amqpURL, ProviderURL: "http://mockprovider:8080"}
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("config", "config", c)
+
+	if strings.Contains(buf.String(), "s3cret") {
+		t.Errorf("log line leaks a password: %s", buf.String())
+	}
+}

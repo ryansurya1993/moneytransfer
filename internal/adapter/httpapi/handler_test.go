@@ -159,7 +159,7 @@ func TestSubmitAccepted(t *testing.T) {
 			}
 			want := `{"id":"0193f6e8-7b1c-7cc3-9a5e-4b4f1c2d3e4f","status":"PENDING","amount":150000,"currency":"IDR",` +
 				`"bank_code":"BCA","account_number":"****6789","account_holder_name":"Budi Santoso","reference_id":"INV-001",` +
-				`"created_at":"2026-11-13T08:00:00Z","updated_at":"2026-11-13T08:00:00Z"}`
+				`"failure_code":null,"created_at":"2026-11-13T08:00:00Z","updated_at":"2026-11-13T08:00:00Z"}`
 			if got := strings.TrimSpace(rec.Body.String()); got != want {
 				t.Errorf("body\n got %s\nwant %s", got, want)
 			}
@@ -494,5 +494,18 @@ func TestHealth(t *testing.T) {
 				t.Errorf("body = %s", body)
 			}
 		})
+	}
+}
+
+func TestGetFailedTransferShowsFailureCode(t *testing.T) {
+	failed := sample
+	failed.Status = transfer.StatusFailed
+	failed.FailureCode = transfer.FailureAccountClosed
+	s := newTestServer(&fakeService{getResult: failed}, nil)
+
+	rec := s.do(t, newRequest(t, http.MethodGet, "/transfer/"+sample.ID.String(), nil))
+
+	if !strings.Contains(rec.Body.String(), `"status":"FAILED"`) || !strings.Contains(rec.Body.String(), `"failure_code":"ACCOUNT_CLOSED"`) {
+		t.Errorf("body %s, want FAILED with ACCOUNT_CLOSED", rec.Body)
 	}
 }

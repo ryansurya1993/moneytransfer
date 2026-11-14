@@ -28,6 +28,7 @@ type transferResponse struct {
 	AccountNumber     string    `json:"account_number"`
 	AccountHolderName string    `json:"account_holder_name"`
 	ReferenceID       *string   `json:"reference_id"`
+	FailureCode       *string   `json:"failure_code"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }
@@ -46,6 +47,10 @@ func newTransferResponse(t transfer.Transfer) transferResponse {
 	}
 	if t.ReferenceID != "" {
 		resp.ReferenceID = &t.ReferenceID
+	}
+	if t.FailureCode != "" {
+		code := string(t.FailureCode)
+		resp.FailureCode = &code
 	}
 	return resp
 }

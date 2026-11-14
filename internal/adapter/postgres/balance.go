@@ -36,6 +36,25 @@ func (m merchantRepo) Debit(ctx context.Context, merchantID transfer.MerchantID,
 	return transfer.BalanceChange{Balance: transfer.Amount(balance), Version: version}, nil
 }
 
+// Credit has no balance condition: a refund only returns money this transfer took earlier.
+func (m merchantRepo) Credit(ctx context.Context, merchantID transfer.MerchantID, amount transfer.Amount) (transfer.BalanceChange, error) {
+	const q = `
+		UPDATE merchants
+		SET
+			balance = balance + $1,
+			version = version + 1,
+			updated_at = now()
+		WHERE id = $2
+		RETURNING balance, version
+	`
+
+	var balance, version int64
+	if err := m.tx.QueryRowxContext(ctx, q, amount, merchantID).Scan(&balance, &version); err != nil {
+		return transfer.BalanceChange{}, fmt.Errorf("credit merchant balance: %w", err)
+	}
+	return transfer.BalanceChange{Balance: transfer.Amount(balance), Version: version}, nil
+}
+
 type ledgerWriter txRepos
 
 func (l ledgerWriter) Append(ctx context.Context, e transfer.LedgerEntry) error {
