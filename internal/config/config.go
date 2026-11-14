@@ -317,6 +317,73 @@ func (c MockProvider) LogValue() slog.Value {
 	return slog.GroupValue(append(attrs, c.HTTP.logAttrs()...)...)
 }
 
+// LoadTest holds the settings of the loadtest binary.
+type LoadTest struct {
+	DB DB
+
+	TargetURL        string        `env:"LOADTEST_TARGET_URL" envDefault:"http://api:8080"`
+	Rate             int           `env:"LOADTEST_RATE" envDefault:"20"`
+	Duration         time.Duration `env:"LOADTEST_DURATION" envDefault:"30s"`
+	Concurrency      int           `env:"LOADTEST_CONCURRENCY" envDefault:"20"`
+	DuplicatePercent int           `env:"LOADTEST_DUPLICATE_PERCENT" envDefault:"10"`
+	MagicPercent     int           `env:"LOADTEST_MAGIC_PERCENT" envDefault:"5"`
+	RequestTimeout   time.Duration `env:"LOADTEST_REQUEST_TIMEOUT" envDefault:"5s"`
+	DrainTimeout     time.Duration `env:"LOADTEST_DRAIN_TIMEOUT" envDefault:"90s"`
+	MinAmount        int64         `env:"LOADTEST_MIN_AMOUNT" envDefault:"50000"`
+	MaxAmount        int64         `env:"LOADTEST_MAX_AMOUNT" envDefault:"5000000"`
+	MerchantID       int64         `env:"MERCHANT_ID" envDefault:"1"`
+}
+
+// LoadLoadTest reads the load test settings from the environment.
+// The error lists every missing or invalid setting, not just the first.
+func LoadLoadTest() (LoadTest, error) {
+	c, err := env.ParseAs[LoadTest]()
+	if err != nil {
+		return LoadTest{}, err
+	}
+
+	var errs []error
+	if u, err := url.Parse(c.TargetURL); err != nil || u.Scheme == "" || u.Host == "" {
+		errs = append(errs, errors.New("LOADTEST_TARGET_URL must be an absolute URL"))
+	}
+	positive := []struct {
+		name  string
+		value int64
+	}{
+		{"LOADTEST_RATE", int64(c.Rate)},
+		{"LOADTEST_DURATION", int64(c.Duration)},
+		{"LOADTEST_CONCURRENCY", int64(c.Concurrency)},
+		{"LOADTEST_REQUEST_TIMEOUT", int64(c.RequestTimeout)},
+		{"LOADTEST_DRAIN_TIMEOUT", int64(c.DrainTimeout)},
+		{"LOADTEST_MIN_AMOUNT", c.MinAmount},
+		{"MERCHANT_ID", c.MerchantID},
+	}
+	for _, p := range positive {
+		if p.value <= 0 {
+			errs = append(errs, fmt.Errorf("%s must be greater than 0", p.name))
+		}
+	}
+	percents := []struct {
+		name  string
+		value int
+	}{
+		{"LOADTEST_DUPLICATE_PERCENT", c.DuplicatePercent},
+		{"LOADTEST_MAGIC_PERCENT", c.MagicPercent},
+	}
+	for _, p := range percents {
+		if p.value < 0 || p.value > 100 {
+			errs = append(errs, fmt.Errorf("%s must be between 0 and 100", p.name))
+		}
+	}
+	if c.MaxAmount < c.MinAmount {
+		errs = append(errs, errors.New("LOADTEST_MAX_AMOUNT must not be less than LOADTEST_MIN_AMOUNT"))
+	}
+	if err := errors.Join(errs...); err != nil {
+		return LoadTest{}, err
+	}
+	return c, nil
+}
+
 func (h HTTP) logAttrs() []slog.Attr {
 	return []slog.Attr{
 		slog.Int("HTTP_PORT", h.Port),

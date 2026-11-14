@@ -74,6 +74,14 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-}
     ports:
       - "${API_PORT:-18080}:${HTTP_PORT:-8080}"
+    healthcheck:
+      # The distroless image has no curl, so the binary probes itself.
+      test: ["CMD", "/usr/local/bin/api", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+      start_interval: 1s
     depends_on:
       seed:
         condition: service_completed_successfully
@@ -164,6 +172,35 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-}
     restart: unless-stopped
     stop_grace_period: 15s
+
+  # Not started by `docker compose up`; run it with `docker compose run --rm loadtest`,
+  # or `docker compose run --rm loadtest topup 1000000000` to add money to the balance.
+  # After `--scale worker=N`, add --no-deps, or `run` puts the worker count back to 1.
+  loadtest:
+    build: .
+    # An entrypoint, not a command, so `run loadtest topup <amount>` passes arguments to the binary.
+    entrypoint: ["/usr/local/bin/loadtest"]
+    profiles: ["loadtest"]
+    environment:
+      DATABASE_URL: *database-url
+      LOADTEST_TARGET_URL: ${LOADTEST_TARGET_URL:-}
+      LOADTEST_RATE: ${LOADTEST_RATE:-}
+      LOADTEST_DURATION: ${LOADTEST_DURATION:-}
+      LOADTEST_CONCURRENCY: ${LOADTEST_CONCURRENCY:-}
+      LOADTEST_DUPLICATE_PERCENT: ${LOADTEST_DUPLICATE_PERCENT:-}
+      LOADTEST_MAGIC_PERCENT: ${LOADTEST_MAGIC_PERCENT:-}
+      LOADTEST_REQUEST_TIMEOUT: ${LOADTEST_REQUEST_TIMEOUT:-}
+      LOADTEST_DRAIN_TIMEOUT: ${LOADTEST_DRAIN_TIMEOUT:-}
+      LOADTEST_MIN_AMOUNT: ${LOADTEST_MIN_AMOUNT:-}
+      LOADTEST_MAX_AMOUNT: ${LOADTEST_MAX_AMOUNT:-}
+      MERCHANT_ID: ${MERCHANT_ID:-}
+    depends_on:
+      api:
+        condition: service_healthy
+      relay:
+        condition: service_started
+      worker:
+        condition: service_started
 
 volumes:
   pgdata:

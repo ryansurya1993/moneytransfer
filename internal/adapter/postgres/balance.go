@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
+
 	"github.com/ryansurya1993/moneytransfer/internal/transfer"
 )
 
@@ -63,7 +65,8 @@ func (l ledgerWriter) Append(ctx context.Context, e transfer.LedgerEntry) error 
 		VALUES ($1, $2, $3, $4, $5, $6)
 	`
 
-	_, err := l.tx.ExecContext(ctx, q, e.MerchantID, e.TransferID, e.Type, e.Amount, e.BalanceAfter, e.MerchantVersion)
+	transferID := uuid.NullUUID{UUID: e.TransferID, Valid: e.TransferID != uuid.Nil}
+	_, err := l.tx.ExecContext(ctx, q, e.MerchantID, transferID, e.Type, e.Amount, e.BalanceAfter, e.MerchantVersion)
 	if err != nil {
 		return fmt.Errorf("insert ledger entry: %w", err)
 	}

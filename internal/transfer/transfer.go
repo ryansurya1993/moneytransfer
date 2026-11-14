@@ -82,14 +82,16 @@ const (
 	EntryDebit EntryType = "DEBIT"
 	// EntryRefund returns the amount of a failed transfer to the balance.
 	EntryRefund EntryType = "REFUND"
+	// EntryDeposit adds money from outside, such as a merchant top-up.
+	EntryDeposit EntryType = "DEPOSIT"
 )
 
 // LedgerEntry records one balance change. Entries are never updated.
 type LedgerEntry struct {
 	MerchantID      MerchantID
-	TransferID      uuid.UUID
+	TransferID      uuid.UUID // uuid.Nil for a deposit
 	Type            EntryType
-	Amount          Amount // signed: negative for a debit, positive for a refund
+	Amount          Amount // signed: negative for a debit, positive otherwise
 	BalanceAfter    Amount
 	MerchantVersion int64
 }

@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/ryansurya1993/moneytransfer/internal/adapter/httpapi"
 	"github.com/ryansurya1993/moneytransfer/internal/adapter/postgres"
@@ -19,10 +20,40 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		if err := healthcheck(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("api stopped", "error", err)
 		os.Exit(1)
 	}
+}
+
+// healthcheck asks the api running in this container whether it is alive.
+func healthcheck() error {
+	cfg, err := config.LoadAPI()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost:"+strconv.Itoa(cfg.HTTP.Port)+"/healthz", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("healthz answered %s", resp.Status)
+	}
+	return nil
 }
 
 func run() error {

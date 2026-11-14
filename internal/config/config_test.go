@@ -367,3 +367,50 @@ func TestWorkerLogValueHidesPasswords(t *testing.T) {
 		t.Errorf("log line leaks a password: %s", buf.String())
 	}
 }
+
+func TestLoadLoadTest(t *testing.T) {
+	t.Setenv("DATABASE_URL", dbURL)
+
+	c, err := config.LoadLoadTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.TargetURL != "http://api:8080" || c.Rate != 20 || c.Duration != 30*time.Second || c.Concurrency != 20 {
+		t.Errorf("target %q, rate %d, duration %v, concurrency %d; want http://api:8080, 20, 30s, 20",
+			c.TargetURL, c.Rate, c.Duration, c.Concurrency)
+	}
+	if c.MinAmount != 50_000 || c.MaxAmount != 5_000_000 {
+		t.Errorf("amounts %d-%d, want 50000-5000000", c.MinAmount, c.MaxAmount)
+	}
+	if c.DuplicatePercent != 10 || c.MagicPercent != 5 || c.DrainTimeout != 90*time.Second {
+		t.Errorf("duplicates %d%%, magic %d%%, drain %v; want 10%%, 5%%, 90s", c.DuplicatePercent, c.MagicPercent, c.DrainTimeout)
+	}
+}
+
+func TestLoadLoadTestErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     map[string]string
+		wantErr string
+	}{
+		{name: "database url missing", env: map[string]string{"DATABASE_URL": ""}, wantErr: "DATABASE_URL"},
+		{name: "relative target", env: map[string]string{"LOADTEST_TARGET_URL": "api:8080"}, wantErr: "LOADTEST_TARGET_URL must be an absolute URL"},
+		{name: "no rate", env: map[string]string{"LOADTEST_RATE": "0"}, wantErr: "LOADTEST_RATE must be greater than 0"},
+		{name: "duplicates over 100", env: map[string]string{"LOADTEST_DUPLICATE_PERCENT": "101"}, wantErr: "LOADTEST_DUPLICATE_PERCENT must be between 0 and 100"},
+		{name: "negative magic", env: map[string]string{"LOADTEST_MAGIC_PERCENT": "-1"}, wantErr: "LOADTEST_MAGIC_PERCENT must be between 0 and 100"},
+		{name: "max amount below min", env: map[string]string{"LOADTEST_MIN_AMOUNT": "100", "LOADTEST_MAX_AMOUNT": "99"}, wantErr: "LOADTEST_MAX_AMOUNT must not be less than LOADTEST_MIN_AMOUNT"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", dbURL)
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+
+			_, err := config.LoadLoadTest()
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("got error %v, want one containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}

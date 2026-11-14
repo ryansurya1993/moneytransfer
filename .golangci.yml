@@ -48,8 +48,8 @@ linters:
 
   exclusions:
     rules:
-      # This randomness only picks fake outcomes and spreads retries out; nothing depends on it being unpredictable.
-      - path: internal/(mockprovider/|transfer/process\.go)
+      # This randomness only picks fake outcomes, test data and retry delays; nothing depends on it being unpredictable.
+      - path: internal/(mockprovider/|loadtest/|transfer/process\.go)
         linters:
           - gosec
         text: G404
