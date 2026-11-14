@@ -97,20 +97,24 @@ func eventually(t *testing.T, what string, cond func() bool) {
 var consumeOpts = ConsumeOptions{Concurrency: 4, ShutdownTimeout: time.Second}
 
 func TestConsumeAcksProcessedMessages(t *testing.T) {
-	c := dial(t)
-	p := &fakeProcessor{}
-	id := uuid.New()
-	publishTransfer(t, c, id, "")
+	for _, eventType := range []transfer.EventType{transfer.EventTransferCreated, transfer.EventTransferReconcile} {
+		t.Run(string(eventType), func(t *testing.T) {
+			c := dial(t)
+			p := &fakeProcessor{}
+			id := uuid.New()
+			publishTransfer(t, c, id, fmt.Sprintf(`{"transfer_id":%q,"correlation_id":"corr-1","event_type":%q}`, id, eventType))
 
-	stop := consume(t, c, p, consumeOpts)
-	eventually(t, "the message to be processed", func() bool { return p.callCount() == 1 })
-	stop()
+			stop := consume(t, c, p, consumeOpts)
+			eventually(t, "the message to be processed", func() bool { return p.callCount() == 1 })
+			stop()
 
-	if p.ids[0] != id || p.correlations[0] != "corr-1" {
-		t.Errorf("processed %v with correlation %q, want %v and corr-1", p.ids[0], p.correlations[0], id)
-	}
-	if n := readyMessages(t, c, transfersQueue) + readyMessages(t, c, deadLetterQueue); n != 0 {
-		t.Errorf("%d messages left in the queues, want 0 after ack", n)
+			if p.ids[0] != id || p.correlations[0] != "corr-1" {
+				t.Errorf("processed %v with correlation %q, want %v and corr-1", p.ids[0], p.correlations[0], id)
+			}
+			if n := readyMessages(t, c, transfersQueue) + readyMessages(t, c, deadLetterQueue); n != 0 {
+				t.Errorf("%d messages left in the queues, want 0 after ack", n)
+			}
+		})
 	}
 }
 
@@ -122,7 +126,7 @@ func TestConsumeDeadLettersWhatCantBeRetried(t *testing.T) {
 		wantCalls int
 	}{
 		{name: "malformed", body: `{"transfer_id":`, wantCalls: 0},
-		{name: "other event type", body: `{"transfer_id":"0193f6e8-7b1c-7cc3-9a5e-4b4f1c2d3e4f","event_type":"transfer.reconcile"}`, wantCalls: 0},
+		{name: "other event type", body: `{"transfer_id":"0193f6e8-7b1c-7cc3-9a5e-4b4f1c2d3e4f","event_type":"transfer.deleted"}`, wantCalls: 0},
 		{name: "unknown transfer", process: func(context.Context) error { return fmt.Errorf("claim: %w", transfer.ErrNotFound) }, wantCalls: 1},
 	}
 	for _, tt := range tests {

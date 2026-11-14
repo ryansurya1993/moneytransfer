@@ -2,6 +2,7 @@ package transfer
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -26,12 +27,17 @@ type TransferWriter interface {
 	// Create inserts t and fills in its timestamps.
 	// It returns ErrDuplicateIdempotencyKey if the merchant already used the key.
 	Create(ctx context.Context, t *Transfer) error
-	// Claim moves a PENDING or PROCESSING transfer to PROCESSING and returns it.
+	// Claim moves a PENDING, PROCESSING or UNKNOWN transfer to PROCESSING and returns it.
 	// It returns ErrAlreadyFinal if the transfer has an outcome, and ErrNotFound if it doesn't exist.
 	Claim(ctx context.Context, id uuid.UUID) (Transfer, error)
 	// Finish records the outcome of a PROCESSING transfer.
 	// It returns false, and changes nothing, if the transfer is no longer PROCESSING.
 	Finish(ctx context.Context, id uuid.UUID, o Outcome) (bool, error)
+	// MarkForReconcile picks up to limit open transfers, oldest first, that haven't changed for their gap,
+	// have used fewer than maxAttempts reconcile tries and have no unsent outbox event.
+	// It counts a try for each and keeps them locked until the transaction ends,
+	// so a concurrent caller picks other transfers.
+	MarkForReconcile(ctx context.Context, gap ReconcileGap, maxAttempts, limit int) ([]ReconcileTarget, error)
 }
 
 // OutboxWriter stores events to publish after the transaction commits.
@@ -59,6 +65,13 @@ type TransferReader interface {
 	ByID(ctx context.Context, id uuid.UUID) (Transfer, error)
 	// ByIdempotencyKey returns ErrNotFound if the merchant never used the key.
 	ByIdempotencyKey(ctx context.Context, merchantID MerchantID, key string) (Transfer, error)
+}
+
+// ExhaustedFinder finds transfers the reconciler has given up on.
+type ExhaustedFinder interface {
+	// Exhausted returns the open transfers that haven't changed for olderThan, have no unsent outbox
+	// event and have used maxAttempts reconcile tries, listing at most limit IDs.
+	Exhausted(ctx context.Context, olderThan time.Duration, maxAttempts, limit int) (Exhausted, error)
 }
 
 // Provider pays transfers out to bank accounts.

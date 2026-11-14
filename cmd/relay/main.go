@@ -1,4 +1,4 @@
-// Command relay publishes committed outbox events to RabbitMQ.
+// Command relay publishes committed outbox events to RabbitMQ and re-queues transfers left without an outcome.
 package main
 
 import (
@@ -21,6 +21,7 @@ import (
 	"github.com/ryansurya1993/moneytransfer/internal/health"
 	"github.com/ryansurya1993/moneytransfer/internal/logging"
 	"github.com/ryansurya1993/moneytransfer/internal/outbox"
+	"github.com/ryansurya1993/moneytransfer/internal/transfer"
 )
 
 func main() {
@@ -68,11 +69,16 @@ func run() error {
 		return err
 	}
 
-	relay := outbox.NewRelay(postgres.NewStore(db), pub, logger, outbox.Options{
+	store := postgres.NewStore(db)
+	relay := outbox.NewRelay(store, pub, logger, outbox.Options{
 		BatchSize:      cfg.BatchSize,
 		PollInterval:   cfg.PollInterval,
 		PublishTimeout: cfg.PublishTimeout,
 		AlertAge:       cfg.OutboxAlertAge,
+	})
+	reconciler := transfer.NewReconciler(store, store, logger, transfer.ReconcilerOptions{
+		After:       cfg.ReconcileAfter,
+		MaxAttempts: cfg.ReconcileMaxAttempts,
 	})
 	srv := &http.Server{
 		Addr: ":" + strconv.Itoa(cfg.HTTP.Port),
@@ -99,6 +105,7 @@ func run() error {
 
 	g, ctx := errgroup.WithContext(ctx)
 	g.Go(func() error { return relay.Run(ctx) })
+	g.Go(func() error { return reconciler.Run(ctx) })
 	g.Go(func() error {
 		if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("serve health checks: %w", err)

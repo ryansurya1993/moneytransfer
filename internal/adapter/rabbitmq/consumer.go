@@ -30,12 +30,10 @@ type ConsumeOptions struct {
 }
 
 type message struct {
-	TransferID    uuid.UUID `json:"transfer_id"`
-	CorrelationID string    `json:"correlation_id"`
-	EventType     string    `json:"event_type"`
+	TransferID    uuid.UUID          `json:"transfer_id"`
+	CorrelationID string             `json:"correlation_id"`
+	EventType     transfer.EventType `json:"event_type"`
 }
-
-const eventTransferCreated = "transfer.created"
 
 // ConsumeTransfers hands messages from the transfers queue to p until ctx is canceled.
 // Then it waits for the messages in progress.
@@ -95,8 +93,10 @@ func (c *Conn) ConsumeTransfers(ctx context.Context, p Processor, opts ConsumeOp
 
 func handle(ctx context.Context, p Processor, d amqp.Delivery, logger *slog.Logger) {
 	var m message
-	if err := json.Unmarshal(d.Body, &m); err != nil || m.TransferID == uuid.Nil || m.EventType != eventTransferCreated {
-		logger.WarnContext(ctx, "message dead-lettered: not a transfer.created event",
+	err := json.Unmarshal(d.Body, &m)
+	known := m.EventType == transfer.EventTransferCreated || m.EventType == transfer.EventTransferReconcile
+	if err != nil || m.TransferID == uuid.Nil || !known {
+		logger.WarnContext(ctx, "message dead-lettered: not a transfer event",
 			"message_id", d.MessageId,
 			"event_type", m.EventType,
 		)
@@ -104,8 +104,11 @@ func handle(ctx context.Context, p Processor, d amqp.Delivery, logger *slog.Logg
 		return
 	}
 	ctx = logging.WithCorrelationID(ctx, m.CorrelationID)
+	if m.EventType == transfer.EventTransferReconcile {
+		logger.InfoContext(ctx, "asking the provider again about a transfer", "transfer_id", m.TransferID)
+	}
 
-	err := p.Process(ctx, m.TransferID)
+	err = p.Process(ctx, m.TransferID)
 	switch {
 	case err == nil:
 		_ = d.Ack(false)

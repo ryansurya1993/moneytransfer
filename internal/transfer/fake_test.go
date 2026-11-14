@@ -39,6 +39,15 @@ type fakeDB struct {
 	failLeft  int   // when > 0, failAt fails only this many times
 	commitErr error // returned instead of committing
 	now       time.Time
+
+	due        []transfer.ReconcileTarget // what MarkForReconcile returns
+	markedWith []markArgs
+}
+
+type markArgs struct {
+	gap         transfer.ReconcileGap
+	maxAttempts int
+	limit       int
 }
 
 func newFakeDB(balance transfer.Amount) *fakeDB {
@@ -153,7 +162,7 @@ func (tx *fakeTx) Claim(_ context.Context, id uuid.UUID) (transfer.Transfer, err
 	switch {
 	case !ok:
 		return transfer.Transfer{}, transfer.ErrNotFound
-	case t.Status != transfer.StatusPending && t.Status != transfer.StatusProcessing:
+	case t.Status != transfer.StatusPending && t.Status != transfer.StatusProcessing && t.Status != transfer.StatusUnknown:
 		return transfer.Transfer{}, transfer.ErrAlreadyFinal
 	}
 	t.Status = transfer.StatusProcessing
@@ -182,4 +191,13 @@ func (tx *fakeTx) Credit(_ context.Context, _ transfer.MerchantID, amount transf
 	tx.s.balance += amount
 	tx.s.version++
 	return transfer.BalanceChange{Balance: tx.s.balance, Version: tx.s.version}, nil
+}
+
+// MarkForReconcile returns db.due; which transfers are due is the database adapter's query.
+func (tx *fakeTx) MarkForReconcile(_ context.Context, gap transfer.ReconcileGap, maxAttempts, limit int) ([]transfer.ReconcileTarget, error) {
+	if err := tx.call("transfers.MarkForReconcile"); err != nil {
+		return nil, err
+	}
+	tx.db.markedWith = append(tx.db.markedWith, markArgs{gap, maxAttempts, limit})
+	return tx.db.due, nil
 }

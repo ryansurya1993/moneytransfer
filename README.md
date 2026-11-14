@@ -120,8 +120,8 @@ The fake provider fails on purpose, so the failure paths can be seen, in two way
 |---|---|---|
 | `0001` | Rejects with `INVALID_ACCOUNT` | `FAILED` (`failure_code: INVALID_ACCOUNT`), balance refunded |
 | `0002` | Pays, but the answer arrives after the worker gave up | `SUCCESS` after a retry with the same key, paid once |
-| `0003` | Answers 503 every time | `UNKNOWN` after 3 attempts, money stays held |
-| `0004` | Rejects with a code the service doesn't know | `UNKNOWN`, money stays held (never refunded on a guess) |
+| `0003` | Answers 503 every time | `UNKNOWN` after 3 attempts, money stays held; checked again 8 times over about 3 hours, then an alert |
+| `0004` | Rejects with a code the service doesn't know | `UNKNOWN`, money stays held (never refunded on a guess); checked again 8 times over about 3 hours, then an alert |
 
 **At random,** for any other account number:
 
@@ -168,8 +168,20 @@ always with the same provider key, so a retry never pays twice. Then:
 - `FAILED` is final, and the amount is already back on the balance. To try again, send a new
   request with a new `Idempotency-Key`; the old key returns the failed transfer.
 - `UNKNOWN` means the provider gave no clear answer, so the bank may have paid. The money stays
-  held. Don't resubmit, which could pay twice; it needs a check with the provider (see
-  [Cut corners](#cut-corners)).
+  held. Don't resubmit, which could pay twice. The relay sends the transfer to the worker again
+  after 1 minute (`RECONCILE_AFTER`), then after 2, 4, 8 minutes and so on, up to an hour
+  between checks; the worker asks the provider with the same key each time, so the status may
+  briefly show `PROCESSING` and then `SUCCESS` or `FAILED`. After 8 checks
+  (`RECONCILE_MAX_ATTEMPTS`, about 3 hours) without an answer, the relay logs
+  `alert=reconcile_exhausted` with the transfer ids every 5 minutes until a person resolves them.
+
+To watch this without waiting, start the stack with a short gap and fewer checks, and send a
+transfer to an account ending in `0003`; within about 5 minutes `docker compose logs relay` shows
+the alert:
+
+```bash
+RECONCILE_AFTER=10s RECONCILE_MAX_ATTEMPTS=3 make up
+```
 
 Request rules:
 
@@ -344,6 +356,7 @@ flowchart LR
     mq -.->|over the delivery limit| dlq[[transfers.dlq]]
     worker -->|"POST /payouts, Idempotency-Key = transfer id"| provider[mockprovider]
     worker -->|"claim, then record outcome and refund"| pg
+    relay -.->|"every 30s: re-queue transfers left without an outcome"| pg
 ```
 
 A transfer moves through these statuses:
@@ -352,11 +365,13 @@ A transfer moves through these statuses:
 PENDING -> PROCESSING -> SUCCESS
                       -> FAILED   (refunded in the same transaction)
                       -> UNKNOWN  (no definite answer from the provider; money stays held)
+
+UNKNOWN, or PENDING/PROCESSING whose message was lost -> reconciler -> PROCESSING again
 ```
 
 | Package | Role |
 |---|---|
-| `internal/transfer` | Core: domain types, validation, submit and payout flows, ports. Imports no database, broker or HTTP library (enforced by the linter). |
+| `internal/transfer` | Core: domain types, validation, submit, payout and reconcile flows, ports. Imports no database, broker or HTTP library (enforced by the linter). |
 | `internal/adapter/httpapi` | HTTP handlers, RFC 9457 errors, correlation id and access log middleware |
 | `internal/adapter/postgres` | Unit of work, repositories, outbox store |
 | `internal/adapter/rabbitmq` | Publisher with confirms, consumer, queue topology |
@@ -410,6 +425,19 @@ jitter, then the transfer becomes `UNKNOWN` and keeps the money. Refunding a tra
 actually paid would pay it twice. The refund runs in the same transaction as the move to
 `FAILED`, guarded by `WHERE status = 'PROCESSING'`, so two workers can't both refund.
 
+**A reconciler looks again at transfers left without an outcome.**
+Every 30 seconds the relay looks for transfers that are `UNKNOWN`, or `PENDING`/`PROCESSING` with
+a lost message, and haven't changed for their gap. It counts a try and writes a
+`transfer.reconcile` outbox event in one transaction, and the worker asks the provider again with
+the same key. The gap starts at 1 minute and doubles after each try, up to an hour, so a short
+provider blip is fixed within minutes and a provider that is down for an hour gets a few calls,
+not a flood. 8 tries take about 3 hours, well inside the 24 hours payment providers such as
+Stripe keep idempotency keys; only then is a person alerted. Rows are taken with
+`FOR UPDATE SKIP LOCKED`, so several relays share the work, and the database clock decides what
+is due, so hosts with different clocks agree. A transfer whose event is still waiting in the
+outbox is skipped: during a broker outage nothing piles up and no tries are used. The summary
+alert repeats every 5 minutes until none are left, so one missed log line doesn't lose it.
+
 **Failed messages are handled by cause.**
 A malformed message or an unknown transfer is rejected and goes to the dead-letter queue. An
 unexpected error is rejected with requeue, redelivered up to 5 times, then dead-lettered. On
@@ -459,6 +487,9 @@ one would be a hole). The checks are plain SQL, the same queries as in step 4.
   caught by the idempotency key.
 - The account holder's name is returned as sent; only the account number is masked.
 - Paths are singular as specified (`/transfer`). A public API would use `/v1/transfers`.
+- The payout provider remembers idempotency keys much longer than the reconcile window (about
+  3 hours by default), so asking again with the same key never pays twice. Stripe, for one,
+  keeps them at least 24 hours.
 - The mock provider keeps payouts in memory (a restart forgets every key, which a real provider
   wouldn't), records the outcome before its delay (so a caller that gives up may already have been
   paid, like a real bank), records nothing on a 503, and is reachable only inside the compose
@@ -470,13 +501,18 @@ one would be a hole). The checks are plain SQL, the same queries as in step 4.
 - **No authentication.** Anyone who knows a transfer id can read it (ids are UUIDv7 and responses
   are minimized). In production: authenticate the merchant, query by id and merchant, and answer
   404 for other merchants' transfers.
-- **No reconciler.** An `UNKNOWN` transfer stays `UNKNOWN` and keeps its money. Resolving it needs
-  an ops action that reuses the worker's finish-and-refund code; editing the rows by hand would
-  skip the refund, the ledger entry and the version.
-- **Alerts are log lines only.** `alert=outbox_backlog`, `alert=provider_unrecognized_response`
-  and `event=transfer_unknown` are structured fields for a log platform to alert on. Routing to
-  chat or paging belongs in the monitoring platform (grouping, silencing, on-call), which isn't
-  part of this setup.
+- **No tool for transfers the reconciler gave up on.** They keep their money and the
+  `reconcile_exhausted` alert lists them. Resolving one needs an ops action that reuses the
+  worker's finish-and-refund code; editing the rows by hand would skip the refund, the ledger
+  entry and the version.
+- **The reconciler sends the payout request again** with the same key instead of asking a status
+  endpoint. The fake provider's answer to a repeated key is its stored result, which is what a
+  status check returns. A real provider may differ: Stripe replays a stored 500 to a repeated
+  key, so only a status read finds out what happened.
+- **Alerts are log lines only.** `alert=outbox_backlog`, `alert=reconcile_exhausted`,
+  `alert=provider_unrecognized_response` and `event=transfer_unknown` are structured fields for a
+  log platform to alert on. Routing to chat or paging belongs in the monitoring platform
+  (grouping, silencing, on-call), which isn't part of this setup.
 - **No CI pipeline, no metrics endpoint.** Tests and lint run locally through `make`.
 - **Account numbers are stored in plain text** in Postgres (masked everywhere else).
 - **The mock provider's `/stats` and key store grow without bound**, which is fine for a demo.
@@ -484,8 +520,8 @@ one would be a hole). The checks are plain SQL, the same queries as in step 4.
 ## Future improvements
 
 Correctness and money
-- A reconciler that finds `UNKNOWN` and stuck transfers and asks the provider's status endpoint
-  (or listens to its webhooks), with a cap and an alert when it gives up.
+- With a real provider, reconcile through its status endpoint (or webhooks) instead of sending
+  the payout request again.
 - An ops command to resolve `UNKNOWN` transfers through the same finish-and-refund code.
 - A periodic ledger check (balance = sum of entries, versions without gaps) with a critical alert.
 - A status history table, for a permanent timeline of each transfer.

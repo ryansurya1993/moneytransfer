@@ -94,14 +94,16 @@ type Relay struct {
 	DB   DB
 	HTTP HTTP
 
-	RabbitMQURL    string        `env:"RABBITMQ_URL,required,notEmpty"`
-	PollInterval   time.Duration `env:"RELAY_POLL_INTERVAL" envDefault:"200ms"`
-	BatchSize      int           `env:"RELAY_BATCH_SIZE" envDefault:"50"`
-	PublishTimeout time.Duration `env:"RELAY_PUBLISH_TIMEOUT" envDefault:"5s"`
-	StallTimeout   time.Duration `env:"RELAY_STALL_TIMEOUT" envDefault:"1m"`
-	OutboxAlertAge time.Duration `env:"OUTBOX_ALERT_AGE" envDefault:"2m"`
-	DeliveryLimit  int           `env:"QUEUE_DELIVERY_LIMIT" envDefault:"5"`
-	LogLevel       slog.Level    `env:"LOG_LEVEL" envDefault:"info"`
+	RabbitMQURL          string        `env:"RABBITMQ_URL,required,notEmpty"`
+	PollInterval         time.Duration `env:"RELAY_POLL_INTERVAL" envDefault:"200ms"`
+	BatchSize            int           `env:"RELAY_BATCH_SIZE" envDefault:"50"`
+	PublishTimeout       time.Duration `env:"RELAY_PUBLISH_TIMEOUT" envDefault:"5s"`
+	StallTimeout         time.Duration `env:"RELAY_STALL_TIMEOUT" envDefault:"1m"`
+	OutboxAlertAge       time.Duration `env:"OUTBOX_ALERT_AGE" envDefault:"2m"`
+	DeliveryLimit        int           `env:"QUEUE_DELIVERY_LIMIT" envDefault:"5"`
+	ReconcileAfter       time.Duration `env:"RECONCILE_AFTER" envDefault:"1m"`
+	ReconcileMaxAttempts int           `env:"RECONCILE_MAX_ATTEMPTS" envDefault:"8"`
+	LogLevel             slog.Level    `env:"LOG_LEVEL" envDefault:"info"`
 }
 
 // LoadRelay reads the relay settings from the environment.
@@ -123,6 +125,8 @@ func LoadRelay() (Relay, error) {
 		{"RELAY_PUBLISH_TIMEOUT", int64(c.PublishTimeout)},
 		{"OUTBOX_ALERT_AGE", int64(c.OutboxAlertAge)},
 		{"QUEUE_DELIVERY_LIMIT", int64(c.DeliveryLimit)},
+		{"RECONCILE_AFTER", int64(c.ReconcileAfter)},
+		{"RECONCILE_MAX_ATTEMPTS", int64(c.ReconcileMaxAttempts)},
 	}
 	for _, p := range positive {
 		if p.value <= 0 {
@@ -158,6 +162,8 @@ func (c Relay) LogValue() slog.Value {
 		slog.String("RELAY_STALL_TIMEOUT", c.StallTimeout.String()),
 		slog.String("OUTBOX_ALERT_AGE", c.OutboxAlertAge.String()),
 		slog.Int("QUEUE_DELIVERY_LIMIT", c.DeliveryLimit),
+		slog.String("RECONCILE_AFTER", c.ReconcileAfter.String()),
+		slog.Int("RECONCILE_MAX_ATTEMPTS", c.ReconcileMaxAttempts),
 		slog.String("LOG_LEVEL", c.LogLevel.String()),
 	}
 	return slog.GroupValue(append(attrs, c.HTTP.logAttrs()...)...)

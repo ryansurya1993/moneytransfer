@@ -91,6 +91,8 @@ func TestProcessOutcomes(t *testing.T) {
 		{name: "paid on the third try", start: transfer.StatusPending, replies: []payoutReply{noAnswer, noAnswer, paid}, wantStatus: transfer.StatusSuccess, wantAttempts: 3, wantBalance: startBalance - payoutAmount},
 		{name: "no answer at all is not refunded", start: transfer.StatusPending, replies: []payoutReply{noAnswer}, wantStatus: transfer.StatusUnknown, wantAttempts: 3, wantBalance: startBalance - payoutAmount},
 		{name: "processing is claimed again", start: transfer.StatusProcessing, replies: []payoutReply{paid}, wantStatus: transfer.StatusSuccess, wantAttempts: 1, wantBalance: startBalance - payoutAmount},
+		{name: "unknown is asked again", start: transfer.StatusUnknown, replies: []payoutReply{paid}, wantStatus: transfer.StatusSuccess, wantAttempts: 1, wantBalance: startBalance - payoutAmount},
+		{name: "unknown refused on a later look is refunded", start: transfer.StatusUnknown, replies: []payoutReply{refused}, wantStatus: transfer.StatusFailed, wantCode: transfer.FailureInvalidAccount, wantAttempts: 1, wantBalance: startBalance, wantRefund: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -156,7 +158,7 @@ func TestProcessRefundLocksTransferBeforeMerchant(t *testing.T) {
 }
 
 func TestProcessSkipsTransfersWithAnOutcome(t *testing.T) {
-	for _, status := range []transfer.Status{transfer.StatusSuccess, transfer.StatusFailed, transfer.StatusUnknown} {
+	for _, status := range []transfer.Status{transfer.StatusSuccess, transfer.StatusFailed} {
 		t.Run(string(status), func(t *testing.T) {
 			db := newProcessDB(status)
 			provider := &fakeProvider{replies: []payoutReply{paid}}

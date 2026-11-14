@@ -52,7 +52,7 @@ func (w transferWriter) Create(ctx context.Context, t *transfer.Transfer) error 
 }
 
 // Claim implements transfer.TransferWriter.
-// A PROCESSING transfer is claimed again, since its worker may have crashed.
+// A PROCESSING transfer is claimed again, since its worker may have crashed, and so is an UNKNOWN one.
 // The provider's idempotency key makes the second call safe.
 func (w transferWriter) Claim(ctx context.Context, id uuid.UUID) (transfer.Transfer, error) {
 	const q = `
@@ -62,7 +62,7 @@ func (w transferWriter) Claim(ctx context.Context, id uuid.UUID) (transfer.Trans
 			processing_started_at = COALESCE(processing_started_at, now()),
 			updated_at = now()
 		WHERE id = $1
-			AND status IN ('PENDING', 'PROCESSING')
+			AND status IN ('PENDING', 'PROCESSING', 'UNKNOWN')
 		RETURNING ` + transferColumns
 
 	var row transferRow
@@ -119,6 +119,57 @@ func (w transferWriter) Finish(ctx context.Context, id uuid.UUID, o transfer.Out
 		return false, fmt.Errorf("update transfer outcome: %w", err)
 	}
 	return n == 1, nil
+}
+
+// MarkForReconcile implements transfer.TransferWriter.
+func (w transferWriter) MarkForReconcile(ctx context.Context, gap transfer.ReconcileGap, maxAttempts, limit int) ([]transfer.ReconcileTarget, error) {
+	// The database clock decides what is due, so relays on hosts with different clocks agree.
+	// The first updated_at condition is the shortest gap; it lets the index skip recent rows.
+	const q = `
+		WITH due AS (
+			SELECT id
+			FROM transfers t
+			WHERE status IN ('PENDING', 'PROCESSING', 'UNKNOWN')
+				AND updated_at < now() - make_interval(secs => $1)
+				AND updated_at < now() - make_interval(secs => least($1 * power(2, reconcile_attempts), $4))
+				AND reconcile_attempts < $2
+				AND NOT EXISTS (
+					SELECT 1
+					FROM outbox o
+					WHERE o.transfer_id = t.id
+						AND o.published_at IS NULL
+				)
+			ORDER BY updated_at
+			LIMIT $3
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE transfers t
+		SET
+			reconcile_attempts = t.reconcile_attempts + 1,
+			updated_at = now()
+		FROM due
+		WHERE t.id = due.id
+		RETURNING t.id, t.correlation_id, t.status, t.reconcile_attempts
+	`
+	var rows []struct {
+		ID                uuid.UUID `db:"id"`
+		CorrelationID     string    `db:"correlation_id"`
+		Status            string    `db:"status"`
+		ReconcileAttempts int       `db:"reconcile_attempts"`
+	}
+	if err := w.tx.SelectContext(ctx, &rows, q, gap.First.Seconds(), maxAttempts, limit, gap.Max.Seconds()); err != nil {
+		return nil, fmt.Errorf("mark transfers for reconciliation: %w", err)
+	}
+	targets := make([]transfer.ReconcileTarget, len(rows))
+	for i, r := range rows {
+		targets[i] = transfer.ReconcileTarget{
+			ID:            r.ID,
+			CorrelationID: r.CorrelationID,
+			Status:        transfer.Status(r.Status),
+			Attempt:       r.ReconcileAttempts,
+		}
+	}
+	return targets, nil
 }
 
 const transferColumns = `
@@ -199,4 +250,41 @@ func (s *Store) getTransfer(ctx context.Context, q string, args ...any) (transfe
 		return transfer.Transfer{}, fmt.Errorf("select transfer: %w", wrapUnavailable(err))
 	}
 	return row.toDomain(), nil
+}
+
+var _ transfer.ExhaustedFinder = (*Store)(nil)
+
+// Exhausted implements transfer.ExhaustedFinder.
+func (s *Store) Exhausted(ctx context.Context, olderThan time.Duration, maxAttempts, limit int) (transfer.Exhausted, error) {
+	const q = `
+		SELECT id, updated_at, count(*) OVER () AS total
+		FROM transfers t
+		WHERE status IN ('PENDING', 'PROCESSING', 'UNKNOWN')
+			AND updated_at < now() - make_interval(secs => $1)
+			AND reconcile_attempts >= $2
+			AND NOT EXISTS (
+				SELECT 1
+				FROM outbox o
+				WHERE o.transfer_id = t.id
+					AND o.published_at IS NULL
+			)
+		ORDER BY updated_at
+		LIMIT $3
+	`
+	var rows []struct {
+		ID        uuid.UUID `db:"id"`
+		UpdatedAt time.Time `db:"updated_at"`
+		Total     int       `db:"total"`
+	}
+	if err := s.db.SelectContext(ctx, &rows, q, olderThan.Seconds(), maxAttempts, limit); err != nil {
+		return transfer.Exhausted{}, fmt.Errorf("select transfers out of reconcile tries: %w", wrapUnavailable(err))
+	}
+	if len(rows) == 0 {
+		return transfer.Exhausted{}, nil
+	}
+	ex := transfer.Exhausted{Count: rows[0].Total, WaitingSince: rows[0].UpdatedAt}
+	for _, r := range rows {
+		ex.IDs = append(ex.IDs, r.ID)
+	}
+	return ex, nil
 }

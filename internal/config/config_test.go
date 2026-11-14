@@ -216,6 +216,9 @@ func TestLoadRelay(t *testing.T) {
 	if c.StallTimeout != time.Minute || c.OutboxAlertAge != 2*time.Minute || c.DeliveryLimit != 5 {
 		t.Errorf("stall %v alert %v limit %d, want 1m 2m 5", c.StallTimeout, c.OutboxAlertAge, c.DeliveryLimit)
 	}
+	if c.ReconcileAfter != time.Minute || c.ReconcileMaxAttempts != 8 {
+		t.Errorf("reconcile after %v, %d tries; want 1m, 8", c.ReconcileAfter, c.ReconcileMaxAttempts)
+	}
 }
 
 func TestLoadRelayErrors(t *testing.T) {
@@ -227,6 +230,8 @@ func TestLoadRelayErrors(t *testing.T) {
 		{name: "rabbitmq url missing", env: map[string]string{"RABBITMQ_URL": ""}, wantErr: "RABBITMQ_URL"},
 		{name: "zero batch", env: map[string]string{"RELAY_BATCH_SIZE": "0"}, wantErr: "RELAY_BATCH_SIZE must be greater than 0"},
 		{name: "zero delivery limit", env: map[string]string{"QUEUE_DELIVERY_LIMIT": "0"}, wantErr: "QUEUE_DELIVERY_LIMIT must be greater than 0"},
+		{name: "zero reconcile gap", env: map[string]string{"RECONCILE_AFTER": "0s"}, wantErr: "RECONCILE_AFTER must be greater than 0"},
+		{name: "zero reconcile tries", env: map[string]string{"RECONCILE_MAX_ATTEMPTS": "0"}, wantErr: "RECONCILE_MAX_ATTEMPTS must be greater than 0"},
 		{
 			name:    "stall shorter than one publish",
 			env:     map[string]string{"RELAY_STALL_TIMEOUT": "5s", "RELAY_PUBLISH_TIMEOUT": "5s"},

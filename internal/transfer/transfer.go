@@ -31,7 +31,7 @@ const (
 	// StatusFailed means the provider refused the payout and the amount was refunded.
 	StatusFailed Status = "FAILED"
 	// StatusUnknown means the provider never gave a definite answer.
-	// The money may have left, so nothing is refunded until someone finds out.
+	// The money may have left, so nothing is refunded; the reconciler asks the provider again later.
 	StatusUnknown Status = "UNKNOWN"
 )
 
@@ -99,8 +99,12 @@ type LedgerEntry struct {
 // EventType names an outbox event.
 type EventType string
 
-// EventTransferCreated announces a new transfer to be processed.
-const EventTransferCreated EventType = "transfer.created"
+const (
+	// EventTransferCreated announces a new transfer to be processed.
+	EventTransferCreated EventType = "transfer.created"
+	// EventTransferReconcile asks for another look at a transfer that has no outcome yet.
+	EventTransferReconcile EventType = "transfer.reconcile"
+)
 
 // OutboxEvent is a message published after its transaction commits.
 // It holds IDs only; consumers load the details.
