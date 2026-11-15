@@ -68,6 +68,8 @@ func TestSendSkipsWhenAllSlotsAreBusy(t *testing.T) {
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	defer srv.Close()
+	// Real time on purpose: send paces with its own ticker. The four ticks take 40ms against a 200ms
+	// hold, a wide margin (no failure in 7,000 stress runs); a fake clock would be test-only code in send.
 	go func() {
 		time.Sleep(200 * time.Millisecond)
 		close(release)

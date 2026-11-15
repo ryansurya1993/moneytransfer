@@ -102,21 +102,25 @@ func (b *syncBuffer) String() string {
 
 var defaultOptions = outbox.Options{BatchSize: 50, PollInterval: time.Hour, PublishTimeout: 5 * time.Second, AlertAge: 2 * time.Minute}
 
-// start runs the relay in the background and stops it when the test ends.
-func start(t *testing.T, store outbox.Store, pub outbox.Publisher, opts outbox.Options) (*outbox.Relay, *syncBuffer, context.CancelFunc) {
+// start runs a relay until the test ends. The returned stop cancels it and waits until Run returns,
+// so everything the last round logged is in logs; calling it again is a no-op.
+func start(t *testing.T, store outbox.Store, pub outbox.Publisher, opts outbox.Options) (*outbox.Relay, *syncBuffer, func() error) {
 	t.Helper()
 	logs := &syncBuffer{}
 	r := outbox.NewRelay(store, pub, slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})), opts)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() { done <- r.Run(ctx) }()
-	t.Cleanup(func() {
+	stop := sync.OnceValue(func() error {
 		cancel()
-		if err := <-done; err != nil {
+		return <-done
+	})
+	t.Cleanup(func() {
+		if err := stop(); err != nil {
 			t.Errorf("Run returned %v, want nil after cancel", err)
 		}
 	})
-	return r, logs, cancel
+	return r, logs, stop
 }
 
 func waitFor(t *testing.T, cond func() bool) {
@@ -180,14 +184,15 @@ func TestShutdownLetsTheRoundFinish(t *testing.T) {
 	store := newFakeStore(3)
 	pub := &fakePublisher{}
 	ready := make(chan struct{})
-	var cancel context.CancelFunc
+	var stop func() error
 	var once sync.Once
-	// Cancel the relay while its first publish is in progress.
+	// Stop the relay while its first publish is in progress. Run can't return before the publish does,
+	// so stop runs on its own goroutine.
 	pub.onPublish = func() {
 		<-ready
-		once.Do(cancel)
+		once.Do(func() { go func() { _ = stop() }() })
 	}
-	_, _, cancel = start(t, store, pub, defaultOptions)
+	_, _, stop = start(t, store, pub, defaultOptions)
 	close(ready)
 
 	waitFor(t, func() bool { _, sent, _ := store.state(); return sent == 3 })
@@ -212,10 +217,13 @@ func TestBacklogAlert(t *testing.T) {
 			store := newFakeStore(1)
 			store.oldestAge = tt.oldestAgo
 			// Every publish fails, so the event stays unsent.
-			_, logs, _ := start(t, store, &fakePublisher{failFirst: 1000}, defaultOptions)
+			_, logs, stop := start(t, store, &fakePublisher{failFirst: 1000}, defaultOptions)
 
 			waitFor(t, func() bool { _, _, rounds := store.state(); return rounds >= 1 })
-			time.Sleep(20 * time.Millisecond)
+			// A round checks the backlog before Run can return, so after stop the first check is logged.
+			if err := stop(); err != nil {
+				t.Fatal(err)
+			}
 			if got := strings.Contains(logs.String(), `"alert":"outbox_backlog"`); got != tt.wantAlert {
 				t.Errorf("alert logged = %v, want %v; logs %s", got, tt.wantAlert, logs)
 			}
