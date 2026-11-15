@@ -85,6 +85,10 @@ Requirements:
 Starting builds one image with all binaries, starts Postgres, RabbitMQ and the services, runs the
 migrations, and seeds merchant 1 with 1,000,000,000 rupiah. It returns once everything is healthy.
 
+> [!TIP]
+> To browse the data in a database tool (DataGrip, DBeaver) while the stack runs: host `localhost`,
+> port `15432`, database `moneytransfer`, user and password `moneytransfer`.
+
 Then send a transfer:
 
 ```bash
@@ -237,12 +241,15 @@ All commands are for bash; on Windows, Git Bash ([why](#quick-start)).
 | `relay` | Publishes stored events to RabbitMQ, re-queues stuck transfers, checks the ledger | - |
 | `worker` | Calls the provider, records the outcome, refunds failures | - |
 | `mockprovider` | Fake bank with random delays and outcomes | - |
-| `postgres`, `rabbitmq` | Storage and broker (RabbitMQ UI: user and password `moneytransfer`) | `18672` (UI) |
+| `postgres` | Storage (database, user and password `moneytransfer`) | `15432` |
+| `rabbitmq` | Broker (UI: user and password `moneytransfer`) | `18672` (UI) |
 | `migrate`, `seed` | One-shot jobs that create the schema and the merchant | - |
 
-Both ports listen on 127.0.0.1 only, so the unauthenticated API and the RabbitMQ UI are not
-reachable from the network. Ports and every other setting can be changed in a `.env` file (copy
-`.env.example`, which lists all variables with their defaults).
+All three ports listen on 127.0.0.1 only, so the API, the database and the RabbitMQ UI are not
+reachable from the network. To browse the data with a database tool (DataGrip, DBeaver), connect to
+`localhost:15432`, database `moneytransfer`, user and password `moneytransfer`.
+Ports and every other setting can be changed in a `.env` file (copy `.env.example`, which lists
+all variables with their defaults).
 
 ---
 
