@@ -226,7 +226,7 @@ func (l ledgerCheckRepo) AddFindings(ctx context.Context, fs []transfer.LedgerFi
 		INSERT INTO ledger_findings (merchant_id, rule, merchant_version, transfer_id)
 		SELECT merchant_id, rule, NULLIF(merchant_version, 0), NULLIF(transfer_id, '00000000-0000-0000-0000-000000000000')
 		FROM unnest($1::bigint[], $2::text[], $3::bigint[], $4::uuid[]) AS f (merchant_id, rule, merchant_version, transfer_id)
-		ON CONFLICT ON CONSTRAINT ledger_findings_problem_uniq DO NOTHING
+		ON CONFLICT (merchant_id, rule, merchant_version, transfer_id) WHERE resolved_at IS NULL DO NOTHING
 		RETURNING id, merchant_id, rule, merchant_version, transfer_id
 	`
 	merchants := make([]int64, len(fs))

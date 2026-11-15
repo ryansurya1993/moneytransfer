@@ -1,7 +1,9 @@
 // Command relay publishes committed outbox events to RabbitMQ, re-queues transfers left without an outcome
 // and checks the ledger.
 //
-// `relay resolve-ledger-finding <id> --by <name> --note <text>` closes a ledger finding instead.
+// To close a ledger finding instead:
+//
+//	relay resolve-ledger-finding <ledger_findings.id> --by <name> --note <text>
 package main
 
 import (
@@ -148,7 +150,7 @@ func run() error {
 }
 
 func resolveFinding(args []string) int {
-	const usage = `usage: relay resolve-ledger-finding <id> --by <name> --note <why it is resolved>`
+	const usage = `usage: relay resolve-ledger-finding <ledger_findings.id> --by <name> --note <why it is resolved>`
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, usage)
 		return 1

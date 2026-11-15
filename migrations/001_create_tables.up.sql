@@ -116,9 +116,13 @@ CREATE TABLE ledger_findings (
     )),
     CONSTRAINT ledger_findings_resolution_complete CHECK (
         (resolved_at IS NULL) = (resolved_by IS NULL) AND (resolved_at IS NULL) = (resolution_note IS NULL)
-    ),
-    -- A problem the check sees again on its next round is recorded once.
-    CONSTRAINT ledger_findings_problem_uniq UNIQUE NULLS NOT DISTINCT (merchant_id, rule, merchant_version, transfer_id)
+    )
 );
+
+-- A problem the check sees again on its next round is recorded once while open.
+-- Once resolved, the same problem found again is a new finding and holds the merchant again.
+CREATE UNIQUE INDEX ledger_findings_open_problem_uniq
+    ON ledger_findings (merchant_id, rule, merchant_version, transfer_id) NULLS NOT DISTINCT
+    WHERE resolved_at IS NULL;
 
 CREATE INDEX ledger_findings_open_idx ON ledger_findings (merchant_id) WHERE resolved_at IS NULL;

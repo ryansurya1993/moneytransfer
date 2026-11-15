@@ -37,7 +37,8 @@ PowerShell):
    {"time":"...","level":"ERROR","msg":"ledger findings need a person","alert":"ledger_mismatch","severity":"critical","open_findings":1,"merchant_ids":[1],"rules":["MERCHANT_BALANCE"]}
    ```
 
-3. New transfers are declined:
+3. New transfers are declined. When repeating the drill, use a new `Idempotency-Key` each time: a key
+   that already has a transfer answers with that transfer (`202`), which says nothing about the hold.
 
    ```bash
    curl -s -X POST localhost:18080/transfer \
@@ -67,7 +68,7 @@ PowerShell):
 6. Close the finding, with who and why (both are required and stored with it):
 
    ```bash
-   docker compose run --rm --no-deps relay relay resolve-ledger-finding <id> --by <name> --note "manual balance edit reverted"
+   docker compose run --rm --no-deps relay relay resolve-ledger-finding <ledger_findings.id> --by <name> --note "manual balance edit reverted"
    ```
 
    ```
@@ -95,8 +96,7 @@ PowerShell):
 ## Known limit
 
 The resolve command doesn't re-check the ledger. Closing a finding while the balance is still wrong
-lifts the hold: the check doesn't record the same problem twice, so it stays quiet until the next
-balance change breaks the chain, and then holds the merchant again (19 seconds after the next
-transfer, in a test run). Until then, transfers can go out on the wrong balance. Fix first, then
-resolve. A resolve command that re-checks and refuses while the books still don't match is listed
-under future improvements.
+lifts the hold until the next check round, which finds the problem again, records a new finding and
+holds the merchant again (within about 30 seconds). In that window, transfers can go out on the
+wrong balance. Fix first, then resolve. A resolve command that re-checks and refuses while the books
+still don't match is listed under future improvements.

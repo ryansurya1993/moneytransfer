@@ -257,6 +257,26 @@ func TestLedgerCheckRecordsAProblemOnce(t *testing.T) {
 	}
 }
 
+// The same break at the same version, after its first finding was resolved, must hold the merchant again.
+func TestLedgerCheckFlagsAProblemAgainAfterAResolve(t *testing.T) {
+	db, _, _ := paidAndRefunded(t)
+	first := holdMerchant(t, db)
+	if _, stillHeld, err := transfer.ResolveLedgerFinding(t.Context(), postgres.NewStore(db), first, "ops", "reverted"); err != nil || stillHeld {
+		t.Fatalf("resolve = held %t, %v; want released", stillHeld, err)
+	}
+
+	exec(t, db, `UPDATE merchants SET balance = balance + 1 WHERE id = 1`)
+	check(t, db)
+
+	var open int
+	if err := db.GetContext(t.Context(), &open, `SELECT count(*) FROM ledger_findings WHERE resolved_at IS NULL`); err != nil {
+		t.Fatal(err)
+	}
+	if open != 1 || !held(t, db) {
+		t.Errorf("open findings = %d, held = %t; want a new open finding and the merchant held", open, held(t, db))
+	}
+}
+
 // holdMerchant gives merchant 1 an open finding and a hold, as the check does, and returns the finding ID.
 func holdMerchant(t *testing.T, db *sqlx.DB) int64 {
 	t.Helper()
