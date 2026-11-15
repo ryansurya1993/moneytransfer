@@ -71,6 +71,7 @@ func run() int {
 		MinAmount:        cfg.MinAmount,
 		MaxAmount:        cfg.MaxAmount,
 		MerchantID:       cfg.MerchantID,
+		Progress:         os.Stderr,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "load test: %v\n", err)

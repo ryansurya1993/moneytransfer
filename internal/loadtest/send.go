@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"sync"
@@ -28,8 +29,12 @@ type traffic struct {
 // send fires the plan open loop: one shot every 1/rate, whether or not earlier requests have answered.
 // Latency counts from the planned start, so a stalled api shows up in the percentiles
 // instead of silently slowing the test down.
-func send(ctx context.Context, client *http.Client, target string, shots []shot, rate, concurrency int) (traffic, error) {
+// Every progressEvery it writes how far it is to progress.
+func send(ctx context.Context, client *http.Client, target string, shots []shot, rate, concurrency int,
+	progress io.Writer, progressEvery time.Duration,
+) (traffic, error) {
 	interval := time.Second / time.Duration(rate)
+	planned := time.Duration(len(shots)) * interval
 	slots := make(chan struct{}, concurrency)
 	var (
 		mu sync.Mutex
@@ -40,6 +45,8 @@ func send(ctx context.Context, client *http.Client, target string, shots []shot,
 	defer timer.Stop()
 
 	start := time.Now()
+	lastProgress := start
+	launched := 0
 	for i, s := range shots {
 		at := start.Add(time.Duration(i) * interval)
 		timer.Reset(time.Until(at))
@@ -61,6 +68,7 @@ func send(ctx context.Context, client *http.Client, target string, shots []shot,
 				t.skipped++
 				continue
 			}
+			launched++
 			wg.Go(func() {
 				defer func() { <-slots }()
 				r := post(ctx, client, target, s.req, at)
@@ -68,6 +76,12 @@ func send(ctx context.Context, client *http.Client, target string, shots []shot,
 				t.results = append(t.results, r)
 				mu.Unlock()
 			})
+		}
+		// Checked between ticks rather than on its own timer, so reporting never delays a shot.
+		if now := time.Now(); now.Sub(lastProgress) >= progressEvery {
+			lastProgress = now
+			_, _ = fmt.Fprintf(progress, "  sending %s/%s, %d sent\n",
+				now.Sub(start).Round(time.Second), planned.Round(time.Second), launched)
 		}
 	}
 	t.elapsed = time.Since(start)

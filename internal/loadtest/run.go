@@ -3,6 +3,7 @@ package loadtest
 import (
 	"context"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"net/http"
 	"time"
@@ -24,9 +25,14 @@ type Options struct {
 	MinAmount        int64
 	MaxAmount        int64
 	MerchantID       int64
+	// Progress receives a line every few seconds while the run sends and waits; nil means none.
+	Progress io.Writer
 }
 
-const drainPoll = time.Second
+const (
+	drainPoll     = time.Second
+	progressEvery = 5 * time.Second
+)
 
 // Run sends the burst, waits until the run's transfers have an outcome and checks the money.
 // Other activity on the merchant during the run is allowed: the checks tell it apart through the ledger.
@@ -50,6 +56,11 @@ func Run(ctx context.Context, db *sqlx.DB, o Options) (Report, error) {
 	rng := rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
 	runID := fmt.Sprintf("%s-%04x", time.Now().UTC().Format("20060102T150405Z"), rng.IntN(1<<16))
 	ref := runReference(runID)
+	progress := o.Progress
+	if progress == nil {
+		progress = io.Discard
+	}
+	_, _ = fmt.Fprintf(progress, "load test %s: %d requests/s for %s\n", runID, o.Rate, o.Duration)
 	shots := newPlan(rng, planOptions{
 		runID:            runID,
 		ticks:            max(int(o.Duration*time.Duration(o.Rate)/time.Second), 1),
@@ -62,15 +73,17 @@ func Run(ctx context.Context, db *sqlx.DB, o Options) (Report, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConnsPerHost = o.Concurrency
 	client := &http.Client{Timeout: o.RequestTimeout, Transport: transport}
-	tr, err := send(ctx, client, o.TargetURL, shots, o.Rate, o.Concurrency)
+	tr, err := send(ctx, client, o.TargetURL, shots, o.Rate, o.Concurrency, progress, progressEvery)
 	if err != nil {
 		return Report{}, err
 	}
 
-	drained, drainTime, err := drain(ctx, st, ref, o.DrainTimeout)
+	_, _ = fmt.Fprintf(progress, "  sent %d requests, waiting for their outcomes\n", len(tr.results))
+	drained, drainTime, err := drain(ctx, st, ref, o.DrainTimeout, progress)
 	if err != nil {
 		return Report{}, err
 	}
+	_, _ = fmt.Fprintln(progress, "  checking")
 	end, err := st.snapshot(ctx)
 	if err != nil {
 		return Report{}, err
@@ -112,9 +125,10 @@ func Run(ctx context.Context, db *sqlx.DB, o Options) (Report, error) {
 
 // drain waits until none of the run's transfers is PENDING or PROCESSING and the relay has marked
 // all their events published.
-func drain(ctx context.Context, st store, ref string, timeout time.Duration) (check, time.Duration, error) {
+func drain(ctx context.Context, st store, ref string, timeout time.Duration, progress io.Writer) (check, time.Duration, error) {
 	start := time.Now()
 	deadline := start.Add(timeout)
+	lastProgress := start
 	for {
 		inFlight, unpublished, err := st.unsettled(ctx, ref)
 		if err != nil {
@@ -134,6 +148,11 @@ func drain(ctx context.Context, st store, ref string, timeout time.Duration) (ch
 				name:   finished.name,
 				detail: fmt.Sprintf("%d still PENDING or PROCESSING after %s", inFlight, timeout),
 			}, waited, nil
+		}
+		if now := time.Now(); now.Sub(lastProgress) >= progressEvery {
+			lastProgress = now
+			_, _ = fmt.Fprintf(progress, "  waiting %s, %d still PENDING or PROCESSING, %d events not yet published\n",
+				waited.Round(time.Second), inFlight, unpublished)
 		}
 		select {
 		case <-ctx.Done():

@@ -1,9 +1,15 @@
 package loadtest
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -39,7 +45,7 @@ func TestSendRecordsAnswers(t *testing.T) {
 
 	first, second := newRequest("k1"), newRequest("k2")
 	shots := []shot{{req: first}, {req: second, twin: true}, {req: first, retry: true}}
-	tr, err := send(t.Context(), srv.Client(), srv.URL, shots, 100, 10)
+	tr, err := send(t.Context(), srv.Client(), srv.URL, shots, 100, 10, io.Discard, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +86,7 @@ func TestSendSkipsWhenAllSlotsAreBusy(t *testing.T) {
 		shots[i] = shot{req: newRequest("k")}
 	}
 	// 5 shots 10ms apart, one slot held for 200ms: only the first is sent.
-	tr, err := send(t.Context(), srv.Client(), srv.URL, shots, 100, 1)
+	tr, err := send(t.Context(), srv.Client(), srv.URL, shots, 100, 1, io.Discard, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,11 +104,46 @@ func TestSendWithoutServer(t *testing.T) {
 	url := srv.URL
 	srv.Close()
 
-	tr, err := send(t.Context(), http.DefaultClient, url, []shot{{req: newRequest("k")}}, 100, 1)
+	tr, err := send(t.Context(), http.DefaultClient, url, []shot{{req: newRequest("k")}}, 100, 1, io.Discard, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(tr.results) != 1 || tr.results[0].status != 0 {
 		t.Errorf("got %+v, want one result without an answer", tr.results)
+	}
+}
+
+func TestSendReportsProgress(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+	shots := make([]shot, 10)
+	for i := range shots {
+		shots[i] = shot{req: newRequest(fmt.Sprintf("k%d", i))}
+	}
+
+	// 10 shots at 100 per second take 90ms, so a line every 20ms gives several.
+	var out bytes.Buffer
+	if _, err := send(t.Context(), srv.Client(), srv.URL, shots, 100, 10, &out, 20*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+
+	line := regexp.MustCompile(`^  sending \S+/\S+, (\d+) sent$`)
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("got %d progress lines, want several: %q", len(lines), out.String())
+	}
+	prev := 0
+	for _, l := range lines {
+		m := line.FindStringSubmatch(l)
+		if m == nil {
+			t.Fatalf("progress line %q doesn't look like \"  sending 0s/0s, N sent\"", l)
+		}
+		n, _ := strconv.Atoi(m[1])
+		if n < prev || n > len(shots) {
+			t.Errorf("sent count %d after %d, want it to grow up to %d", n, prev, len(shots))
+		}
+		prev = n
 	}
 }
