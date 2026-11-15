@@ -423,17 +423,8 @@ docker compose logs haproxy api worker | grep 69306aea-ab47-406d-a3bd-61fa8c0257
 The RabbitMQ UI at http://localhost:18672 shows the `transfers` queue and the `transfers.dlq`
 dead-letter queue.
 
-Open ledger findings, and closing one after looking into it (who and why are stored with it;
-the merchant's payouts resume when its last finding is closed):
-
-```bash
-docker compose exec postgres psql -U moneytransfer -c \
-  "SELECT id, merchant_id, rule, merchant_version, transfer_id, found_at FROM ledger_findings WHERE resolved_at IS NULL;"
-```
-
-```bash
-docker compose run --rm --no-deps relay relay resolve-ledger-finding <id> --by <name> --note "<what was found and done>"
-```
+The ledger check, how to see it hold a merchant's payouts, and what to do when its alert fires:
+[docs/ledger-check.md](docs/ledger-check.md).
 
 ### Run the tests
 
@@ -567,6 +558,8 @@ Correctness and money
 - A status history table, for a permanent timeline of each transfer.
 - When two workers handle the same transfer and one already marked it `UNKNOWN`, let the other's
   clear answer finish it right away; today it waits for the next re-check.
+- Let the resolve command re-check the merchant's ledger and refuse while it still doesn't match, so
+  a hold can't be lifted by mistake.
 
 Scale
 - One merchant's deductions take turns on one row, which limits how fast a single very busy
