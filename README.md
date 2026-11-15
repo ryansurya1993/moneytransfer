@@ -69,8 +69,10 @@ Requirements:
 - Docker Engine 25+ with Compose v2.20+ (Docker Desktop works).
 - `make` is optional: every command has a Docker-only version.
 - Go 1.26, only to run the tests outside Docker.
-- The commands are for bash. On Windows use Git Bash or WSL (PowerShell's `curl` is a different
-  command).
+
+> [!WARNING]
+> Run the commands in **bash**. On Windows, use **Git Bash** (installed with
+> [Git for Windows](https://git-scm.com/downloads/win)) or WSL, not PowerShell or cmd
 
 | What | With make | With Docker only |
 |---|---|---|
@@ -223,6 +225,8 @@ durations like `1m30s`.
 | The burst test's checks | [`internal/loadtest/checks.go`](internal/loadtest/checks.go) |
 
 ## Guide
+
+All commands are for bash; on Windows, Git Bash ([why](#quick-start)).
 
 ### What runs
 

@@ -18,7 +18,8 @@ accepted transfers wait as `PENDING`, and transfers already at the provider stil
 ## Try it
 
 The service never breaks these rules on its own, so the way to see the check work is to change the
-balance by hand, as a bug would. With the stack running:
+balance by hand, as a bug would. With the stack running, in bash (on Windows, Git Bash, not
+PowerShell):
 
 1. Add 1,000 rupiah to the balance without a ledger entry:
 
