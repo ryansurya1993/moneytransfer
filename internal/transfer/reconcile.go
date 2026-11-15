@@ -115,7 +115,8 @@ func (r *Reconciler) checkExhausted(ctx context.Context) {
 	}
 }
 
-// Sweep queues a transfer.reconcile event for each transfer that is due, oldest first, and counts a try for it.
+// Sweep queues a transfer.reconcile event for each transfer that is due, oldest first.
+// It counts a try for each.
 // A transfer is due when it is PENDING, PROCESSING or UNKNOWN, has tries left, has no outbox event
 // still waiting to be sent, and hasn't changed for its gap: opts.After before the first try,
 // doubling after each try, up to an hour.

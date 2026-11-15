@@ -243,8 +243,8 @@ What it sends, for 30 seconds:
 
 The requests go through HAProxy, so both api replicas deduct from the same balance at the same time.
 
-Then it waits until none of its transfers is `PENDING` or `PROCESSING` and checks Postgres and
-the mock provider:
+Then it waits until none of its transfers is `PENDING` or `PROCESSING` and checks Postgres
+directly (the API has no balance endpoint, on purpose) and the mock provider:
 
 1. Every transfer finished.
 2. The balance is not negative.
@@ -257,6 +257,7 @@ the mock provider:
 
 Other traffic on the merchant during a run (a manual transfer, a top-up, a reconciled refund) is
 fine: it shows up as other balance changes and the checks tell it apart through the ledger.
+The test is meant for test databases: it looks up its transfers by reference, which has no index.
 A merchant whose payouts are on hold stops the test before it sends anything (exit code 2).
 
 A run on a laptop with 3 workers:
@@ -363,7 +364,7 @@ make topup AMOUNT=1000000000
 
 Without make: `docker compose run --rm --build --no-deps loadtest topup 1000000000`. A top-up goes
 through the same code as a refund and writes a `DEPOSIT` ledger entry, so the ledger still
-explains the balance.
+explains the balance. It has no idempotency key: running it twice deposits twice.
 
 `make down` stops everything and keeps the data. `docker compose down -v` also deletes the data;
 the next `make up` starts again from the seeded balance.
@@ -412,109 +413,45 @@ UNKNOWN, or PENDING/PROCESSING whose message was lost -> reconciler -> PROCESSIN
 
 ### Why it is built this way
 
-**One conditional UPDATE guards the balance.**
-`UPDATE merchants SET balance = balance - $1 WHERE id = $2 AND balance >= $1`: Postgres locks the
-row, so concurrent requests for the same merchant queue up, and zero updated rows means
-insufficient balance. There is no read-then-write to race on, and `CHECK (balance >= 0)` backs it
-up. Optimistic locking or `SERIALIZABLE` would turn one busy row into a storm of retries.
+The api deducts the balance with one conditional UPDATE (`... WHERE id = $2 AND balance >= $1`):
+Postgres locks the merchant row, so concurrent requests queue up, and zero updated rows means
+insufficient balance. The same transaction stores the transfer, an outbox event and a ledger entry,
+so there is never a deduction without its transfer or a transfer without its message. The relay
+publishes the event afterwards and marks it sent only once RabbitMQ has confirmed it.
 
-**Transfer, event, balance and ledger commit together (transactional outbox).**
-The api never talks to RabbitMQ. It writes the transfer, an outbox row, the balance change and a
-ledger entry in one transaction, and the relay publishes the outbox row afterwards. There is no
-transfer without its message and no message without its transfer.
+The worker calls the provider with no transaction open and the transfer id as the provider's
+idempotency key, so a retry or a second worker gets the stored answer instead of a second payout.
+Only a failure code the service knows leads to a refund, in the same transaction as the move to
+`FAILED`. A timeout or an unknown answer leaves the transfer `UNKNOWN` with the money held, and the
+relay's reconciler asks again later: refunding a transfer the bank paid would pay it twice.
 
-**Every balance change has a ledger entry.**
-Each entry stores `balance_after` and the merchant's version number, written under the row lock.
-The balance can be rebuilt from the entries, and a missing entry shows up as a gap in the
-versions.
+Every balance change writes a ledger entry with the merchant's version number. The relay checks new
+entries and finished transfers against the money rules, reading only what changed since its last
+round. A broken rule holds that merchant's payouts until a person resolves it; a false alarm delays
+payouts and never moves money.
 
-**A ledger check runs in the relay.** It looks at each merchant whose balance changed since its
-last check and reads only the new ledger entries, from a stored checkpoint, so the cost follows
-the traffic, not the age of the data. It checks that versions have no gaps, that each entry's
-balance is the previous one plus its amount, that the newest entry matches the merchant's
-balance, that each debit is exactly its transfer's amount and that a refund exists exactly when
-a transfer failed. While there is work it keeps going; once caught up it waits 30 seconds.
-A break is stored as a finding and logged as `alert=ledger_mismatch` (merchant, rule and ids,
-never amounts) until a person resolves it.
+| Decision | Why | Record |
+|---|---|---|
+| One conditional UPDATE for the balance | No other request can come between the check and the deduction | [ADR 1](docs/adr/0001-conditional-update-for-the-balance.md) |
+| Transactional outbox; the relay marks only confirmed events | A stored transfer always reaches the broker | [ADR 2](docs/adr/0002-transactional-outbox.md) |
+| Idempotency enforced by a unique constraint | A lost answer never becomes a second transfer; a decline can be retried | [ADR 3](docs/adr/0003-idempotency-key.md) |
+| A ledger entry and a version for every balance change | The balance is explained by its history; a missing entry shows as a gap | [ADR 4](docs/adr/0004-ledger-and-version.md) |
+| A timeout is unknown; refund only on a known failure | No refund on a guess; the reconciler finds the answer later | [ADR 5](docs/adr/0005-unknown-outcomes.md) |
+| Crash on broker loss, wait on database loss | Restarts lose nothing, and an outage doesn't push good messages to the dead-letter queue | [ADR 6](docs/adr/0006-failure-handling-in-the-worker.md) |
+| Ports and adapters | The money rules are tested without a database | [ADR 7](docs/adr/0007-ports-and-adapters.md) |
+| Ids only in messages; masked logs and responses | Personal data stays in the database | [ADR 8](docs/adr/0008-personal-data.md) |
+| Incremental ledger check with a payout hold | Money bugs are found within a minute, at a cost that follows traffic, not history | [ADR 9](docs/adr/0009-incremental-ledger-check.md) |
 
-**A mismatch holds the merchant's payouts.** The hold is set in the same transaction as the
-finding: new transfers get `422 MERCHANT_PAYOUTS_HELD` and nothing is stored, accepted ones wait
-as `PENDING`, ones already sent to the provider finish, and refunds and top-ups still credit.
-Resolving the merchant's last open finding lifts the hold, and waiting transfers go out on the
-next reconcile sweep. A false alarm delays payouts; it never moves money.
-
-**Idempotency is enforced by the database.**
-`UNIQUE (merchant_id, idempotency_key)` on transfers: a retry finds the original and gets it back,
-a retry with a different body is rejected. A retry that arrives while the original is still
-committing waits a few milliseconds for it, instead of getting a "try again" error. Declined
-requests store nothing, so the same key can succeed after a top-up.
-
-**The relay marks only what RabbitMQ confirmed.**
-It publishes with publisher confirms and `mandatory` (a message no queue accepts counts as a
-failure), marks rows as sent only after the confirm, and stops at the first failure. Rows are
-locked with `FOR UPDATE SKIP LOCKED`, so several relays can run. Delivery is at least once; the
-worker handles duplicates.
-
-**No transaction stays open during the provider call.**
-The worker claims the transfer in a short transaction, calls the provider with nothing locked,
-and records the outcome in a second transaction. The provider's idempotency key is the transfer
-id, so a retry, a redelivered message or a second worker gets the stored answer instead of a
-second payout.
-
-**Refund only on an explicit, known failure.**
-Timeouts, 5xx answers and unknown failure codes are retried with exponential backoff and full
-jitter, then the transfer becomes `UNKNOWN` and keeps the money. Refunding a transfer the bank
-actually paid would pay it twice. The refund runs in the same transaction as the move to
-`FAILED`, guarded by `WHERE status = 'PROCESSING'`, so two workers can't both refund.
-
-**A reconciler looks again at transfers left without an outcome.**
-Every 30 seconds the relay looks for transfers that are `UNKNOWN`, or `PENDING`/`PROCESSING` with
-a lost message, and haven't changed for their gap. It counts a try and writes a
-`transfer.reconcile` outbox event in one transaction, and the worker asks the provider again with
-the same key. The gap starts at 1 minute and doubles after each try, up to an hour, so a short
-provider blip is fixed within minutes and a provider that is down for an hour gets a few calls,
-not a flood. 8 tries take about 3 hours, well inside the 24 hours payment providers such as
-Stripe keep idempotency keys; only then is a person alerted. Rows are taken with
-`FOR UPDATE SKIP LOCKED`, so several relays share the work, and the database clock decides what
-is due, so hosts with different clocks agree. A transfer whose event is still waiting in the
-outbox is skipped: during a broker outage nothing piles up and no tries are used. The summary
-alert repeats every 5 minutes until none are left, so one missed log line doesn't lose it.
-
-**Failed messages are handled by cause.**
-A malformed message or an unknown transfer is rejected and goes to the dead-letter queue. An
-unexpected error is rejected with requeue, redelivered up to 5 times, then dead-lettered. On
-shutdown, unfinished messages are returned uncounted. While the database is down, the worker
-waits and retries instead of crashing, because RabbitMQ counts every crash against the delivery
-limit of each message in flight.
-
-**Crash on broker connection loss instead of reconnecting.**
-The relay and the worker exit, and Docker restarts them. A restart loses nothing: unsent events
-wait in the outbox, unacknowledged messages are redelivered, and processing is idempotent. This
-reuses the normal startup path instead of adding reconnect logic.
-
-**Messages carry ids only.**
-The worker loads the transfer from Postgres, so the broker, its UI and the dead-letter queue hold
-no personal data.
-
-**HAProxy in front of two api replicas.**
-Two replicas show that the balance guard holds across processes, not only inside one. HAProxy
-checks each replica's `/healthz` every second, so a replica that crashes or hangs leaves the
-rotation within a second or two. A request whose connection to a dead replica fails goes to the
-other one; a request that already reached a replica is never sent again, so a `POST` can't be
-submitted twice by the proxy. Replicas are found through Docker's DNS, so `--scale api=3` works
-without a restart. Open-source nginx doesn't fit: it has no active health checks, and when its
-DNS view changes during a failing request it gives up instead of trying the other replica (one
-`504` per crashed replica in every test run). Errors HAProxy answers itself use the same problem
-format as the api.
+Two api replicas run behind HAProxy, so the balance guard is shown to hold across processes, not
+only inside one. HAProxy checks each replica's `/healthz` every second and retries a request only
+when its connection failed, so a `POST` is never sent twice; replicas are found through Docker's
+DNS, so `--scale api=3` works without a restart. Open-source nginx doesn't fit: it has no active
+health checks, and when its DNS view changes during a failing request it answers `504` instead of
+trying the other replica. Errors HAProxy answers itself use the same problem format as the api.
 
 HAProxy waits at most 10s for a replica, the same as the api's `HTTP_WRITE_TIMEOUT`, after which
 the api can't answer anyway. When changing one, change the other (`deploy/haproxy/haproxy.cfg`);
 they aren't one setting because HAProxy can't parse Go durations such as `1m30s`.
-
-**The load test reads results from Postgres.**
-The guarantees are about stored money, and the API has no balance endpoint (an unauthenticated
-one would be a hole). The checks are plain SQL, the same queries as in step 4, plus the mock
-provider's list of payouts.
 
 ## Assumptions
 
@@ -545,7 +482,7 @@ provider's list of payouts.
   network. Its outcomes are random and unseeded; the account suffixes above give repeatable
   cases.
 
-## Cut corners
+## Out of scope
 
 - **No authentication.** Anyone who knows a transfer id can read it (ids are UUIDv7 and responses
   are minimized). In production: authenticate the merchant, query by id and merchant, and answer
@@ -578,6 +515,8 @@ Correctness and money
   placed or lifted.
 - Close many ledger findings in one step (after a checker bug), showing what it would close first.
 - A status history table, for a permanent timeline of each transfer.
+- Let a definite provider answer also finish a transfer another worker already marked `UNKNOWN`;
+  today the answer is learned again at the next reconcile try.
 - An idempotency-key table with expiry, once more endpoints need idempotency.
 
 Scale
@@ -593,6 +532,10 @@ Scale
   against Postgres' default limit of 100. The 3-worker load test peaks at 12.
 - Outbox retention: delete published rows after some days, or partition by date and drop old
   partitions.
+- On one very busy merchant, the foreign key from transfers to merchants takes a shared lock on the
+  merchant row, which Postgres records as multixacts (about 4 per transfer with 20 concurrent
+  submits, measured). Watch multixact age, or drop that key: the ledger entry in the same
+  transaction already requires the merchant.
 - The ledger check finds merchants with new entries by comparing every merchant row with its
   checkpoint (about 35 ms at 100,000 merchants). With many more merchants, record which merchants
   changed when their balance changes instead.
@@ -603,6 +546,11 @@ Operations
 - A circuit breaker around the provider that pauses consuming while open (never marking
   transfers `FAILED`).
 - Per-merchant rate limiting at the gateway.
+- An alert on the age of the oldest open transfer, so a reconciler that fails on every run is
+  noticed.
+- `QUEUE_DELIVERY_LIMIT` through a RabbitMQ policy, which can change on a live queue. Today it is a
+  queue argument: changing it on an existing broker makes the relay and worker fail at startup
+  until the queue is deleted.
 
 Security and data
 - Authentication and merchant-scoped queries.
