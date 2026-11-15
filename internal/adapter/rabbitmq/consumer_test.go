@@ -147,16 +147,28 @@ func TestConsumeDeadLettersWhatCantBeRetried(t *testing.T) {
 
 // A message that always fails must stop after the delivery limit instead of looping forever.
 // This relies on rejects counting toward the limit, which nacks don't.
+// A panic must end the same way without stopping the consumer.
 func TestConsumeDeadLettersAfterTheDeliveryLimit(t *testing.T) {
-	c := dial(t)
-	p := &fakeProcessor{process: func(context.Context) error { return errors.New("bug") }}
-	publishTransfer(t, c, uuid.New(), "")
+	tests := []struct {
+		name    string
+		process func(context.Context) error
+	}{
+		{name: "error", process: func(context.Context) error { return errors.New("bug") }},
+		{name: "panic", process: func(context.Context) error { panic("bug") }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := dial(t)
+			p := &fakeProcessor{process: tt.process}
+			publishTransfer(t, c, uuid.New(), "")
 
-	consume(t, c, p, consumeOpts)
+			consume(t, c, p, consumeOpts)
 
-	eventually(t, "the message in the dead-letter queue", func() bool { return readyMessages(t, c, deadLetterQueue) == 1 })
-	if got := p.callCount(); got != deliveryLimit+1 {
-		t.Errorf("processed %d times, want %d (first delivery plus %d redeliveries)", got, deliveryLimit+1, deliveryLimit)
+			eventually(t, "the message in the dead-letter queue", func() bool { return readyMessages(t, c, deadLetterQueue) == 1 })
+			if got := p.callCount(); got != deliveryLimit+1 {
+				t.Errorf("processed %d times, want %d (first delivery plus %d redeliveries)", got, deliveryLimit+1, deliveryLimit)
+			}
+		})
 	}
 }
 

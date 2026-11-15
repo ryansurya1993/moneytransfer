@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -41,7 +42,7 @@ type message struct {
 //
 // A message is acked once p is done.
 // When retrying can't help, it is rejected without requeue and goes to the dead-letter queue.
-// Other failures are rejected with requeue, which counts toward the queue's delivery limit,
+// Other failures and panics are rejected with requeue, which counts toward the delivery limit,
 // so a message that always fails is dead-lettered instead of looping.
 // Messages interrupted by shutdown are nacked, which doesn't count.
 func (c *Conn) ConsumeTransfers(ctx context.Context, p Processor, opts ConsumeOptions, logger *slog.Logger) error {
@@ -107,6 +108,18 @@ func handle(ctx context.Context, p Processor, d amqp.Delivery, logger *slog.Logg
 	if m.EventType == transfer.EventTransferReconcile {
 		logger.InfoContext(ctx, "asking the provider again about a transfer", "transfer_id", m.TransferID)
 	}
+
+	// A crash would count a failed delivery for every message in progress, not just this one.
+	defer func() {
+		if r := recover(); r != nil {
+			logger.ErrorContext(ctx, "panic processing transfer",
+				"transfer_id", m.TransferID,
+				"panic", r,
+				"stack", string(debug.Stack()),
+			)
+			_ = d.Reject(true)
+		}
+	}()
 
 	err = p.Process(ctx, m.TransferID)
 	switch {
