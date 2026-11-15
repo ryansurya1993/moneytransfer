@@ -54,15 +54,25 @@ func (w transferWriter) Create(ctx context.Context, t *transfer.Transfer) error 
 // Claim implements transfer.TransferWriter.
 // A PROCESSING transfer is claimed again, since its worker may have crashed, and so is an UNKNOWN one.
 // The provider's idempotency key makes the second call safe.
+// A PENDING transfer of a held merchant waits; one already sent to the provider is finished.
 func (w transferWriter) Claim(ctx context.Context, id uuid.UUID) (transfer.Transfer, error) {
 	const q = `
-		UPDATE transfers
+		UPDATE transfers t
 		SET
 			status = 'PROCESSING',
 			processing_started_at = COALESCE(processing_started_at, now()),
 			updated_at = now()
 		WHERE id = $1
 			AND status IN ('PENDING', 'PROCESSING', 'UNKNOWN')
+			AND (
+				status <> 'PENDING'
+				OR NOT EXISTS (
+					SELECT 1
+					FROM merchants m
+					WHERE m.id = t.merchant_id
+						AND m.payouts_held_reason IS NOT NULL
+				)
+			)
 		RETURNING ` + transferColumns
 
 	var row transferRow
@@ -78,20 +88,26 @@ func (w transferWriter) Claim(ctx context.Context, id uuid.UUID) (transfer.Trans
 
 func (w transferWriter) whyNotClaimable(ctx context.Context, id uuid.UUID) error {
 	const q = `
-		SELECT EXISTS (
-			SELECT 1
-			FROM transfers
-			WHERE id = $1
-		)
+		SELECT t.status, m.payouts_held_reason IS NOT NULL AS held
+		FROM transfers t
+		JOIN merchants m ON m.id = t.merchant_id
+		WHERE t.id = $1
 	`
-	var exists bool
-	if err := w.tx.GetContext(ctx, &exists, q, id); err != nil {
+	var row struct {
+		Status string `db:"status"`
+		Held   bool   `db:"held"`
+	}
+	err := w.tx.GetContext(ctx, &row, q, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return transfer.ErrNotFound
+	}
+	if err != nil {
 		return fmt.Errorf("select transfer: %w", err)
 	}
-	if exists {
-		return transfer.ErrAlreadyFinal
+	if transfer.Status(row.Status) == transfer.StatusPending && row.Held {
+		return transfer.ErrPayoutsHeld
 	}
-	return transfer.ErrNotFound
+	return transfer.ErrAlreadyFinal
 }
 
 // Finish implements transfer.TransferWriter.
@@ -138,6 +154,16 @@ func (w transferWriter) MarkForReconcile(ctx context.Context, gap transfer.Recon
 					FROM outbox o
 					WHERE o.transfer_id = t.id
 						AND o.published_at IS NULL
+				)
+				-- A held merchant's PENDING transfers wait without using tries.
+				AND (
+					status <> 'PENDING'
+					OR NOT EXISTS (
+						SELECT 1
+						FROM merchants m
+						WHERE m.id = t.merchant_id
+							AND m.payouts_held_reason IS NOT NULL
+					)
 				)
 			ORDER BY updated_at
 			LIMIT $3

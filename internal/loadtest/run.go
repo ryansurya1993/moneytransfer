@@ -37,6 +37,9 @@ func Run(ctx context.Context, db *sqlx.DB, o Options) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
+	if start.Held {
+		return Report{}, fmt.Errorf("merchant %d payouts are on hold until its ledger findings are resolved; every request would be declined", o.MerchantID)
+	}
 	// Below this, almost every request would be declined, which proves little.
 	if minBalance := 10 * (o.MinAmount + o.MaxAmount) / 2; start.Balance < minBalance {
 		return Report{}, fmt.Errorf("balance %d is too low for a meaningful run (want at least %d); top up with `make topup`",

@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -85,10 +84,10 @@ func (h *handler) submit(w http.ResponseWriter, r *http.Request) {
 		ReferenceID:       body.ReferenceID,
 		Description:       body.Description,
 	})
-	if errors.Is(err, transfer.ErrInsufficientBalance) {
+	if reason := declineReason(err); reason != "" {
 		// Declines store nothing, so this log line is their only record.
 		h.logger.InfoContext(r.Context(), "transfer declined",
-			"reason", "insufficient_balance",
+			"reason", reason,
 			"merchant_id", h.opts.MerchantID,
 			"amount", body.Amount,
 			"account_number", maskAccountNumber(body.AccountNumber),

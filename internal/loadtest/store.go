@@ -11,6 +11,7 @@ import (
 type snapshot struct {
 	Balance int64 `db:"balance"`
 	Version int64 `db:"version"`
+	Held    bool  `db:"held"`
 }
 
 // ledgerWindow sums the merchant's ledger entries between two snapshots.
@@ -45,7 +46,7 @@ type store struct {
 
 func (s store) snapshot(ctx context.Context) (snapshot, error) {
 	const q = `
-		SELECT balance, version
+		SELECT balance, version, payouts_held_reason IS NOT NULL AS held
 		FROM merchants
 		WHERE id = $1
 	`

@@ -29,7 +29,7 @@ type SubmitResult struct {
 
 // Submit validates req and stores the transfer, outbox event, debit and ledger entry in one transaction.
 // A repeated request with the same idempotency key returns the original transfer with Replayed set.
-// Rejected requests return a *ValidationError, ErrInsufficientBalance or ErrIdempotencyKeyReused.
+// Rejected requests return a *ValidationError, ErrInsufficientBalance, ErrPayoutsHeld or ErrIdempotencyKeyReused.
 func (s *Service) Submit(ctx context.Context, req SubmitRequest) (SubmitResult, error) {
 	if err := req.validate(s.maxAmount); err != nil {
 		return SubmitResult{}, err

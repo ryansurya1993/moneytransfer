@@ -42,6 +42,8 @@ type fakeDB struct {
 
 	due        []transfer.ReconcileTarget // what MarkForReconcile returns
 	markedWith []markArgs
+
+	ledgerCheck *fakeLedgerCheck // what LedgerCheck returns; it doesn't roll back
 }
 
 type markArgs struct {
@@ -96,6 +98,9 @@ func (tx *fakeTx) Transfers() transfer.TransferWriter { return tx }
 func (tx *fakeTx) Outbox() transfer.OutboxWriter      { return tx }
 func (tx *fakeTx) Merchants() transfer.BalanceUpdater { return tx }
 func (tx *fakeTx) Ledger() transfer.LedgerWriter      { return tx }
+func (tx *fakeTx) LedgerCheck() transfer.LedgerCheckRepo {
+	return tx.db.ledgerCheck
+}
 
 // call records the call and reports the injected failure, if any.
 func (tx *fakeTx) call(name string) error {

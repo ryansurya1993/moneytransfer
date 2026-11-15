@@ -281,6 +281,7 @@ func TestServiceErrors(t *testing.T) {
 	}{
 		{name: "validation", err: validation, wantStatus: 400, wantCode: "VALIDATION_FAILED", wantFields: []string{"amount", "Idempotency-Key"}},
 		{name: "insufficient balance", err: transfer.ErrInsufficientBalance, wantStatus: 422, wantCode: "INSUFFICIENT_BALANCE", wantLog: "transfer declined"},
+		{name: "payouts held", err: transfer.ErrPayoutsHeld, wantStatus: 422, wantCode: "MERCHANT_PAYOUTS_HELD", wantLog: `"reason":"payouts_held"`},
 		{name: "key reused", err: transfer.ErrIdempotencyKeyReused, wantStatus: 422, wantCode: "IDEMPOTENCY_KEY_REUSED"},
 		{name: "store unreachable", err: fmt.Errorf("begin transaction: %w", transfer.ErrUnavailable), wantStatus: 503, wantCode: "SERVICE_UNAVAILABLE"},
 		{name: "deadline", err: fmt.Errorf("debit: %w", context.DeadlineExceeded), wantStatus: 503, wantCode: "SERVICE_UNAVAILABLE"},

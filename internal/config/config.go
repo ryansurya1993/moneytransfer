@@ -169,6 +169,17 @@ func (c Relay) LogValue() slog.Value {
 	return slog.GroupValue(append(attrs, c.HTTP.logAttrs()...)...)
 }
 
+// LedgerAdmin holds the settings of the relay's command for resolving ledger findings.
+// It needs only the database, so it runs while the broker is down.
+type LedgerAdmin struct {
+	DB DB
+}
+
+// LoadLedgerAdmin reads the settings of the ledger command from the environment.
+func LoadLedgerAdmin() (LedgerAdmin, error) {
+	return env.ParseAs[LedgerAdmin]()
+}
+
 // Worker holds the settings of the worker binary.
 type Worker struct {
 	DB   DB

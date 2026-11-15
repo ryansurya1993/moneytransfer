@@ -20,6 +20,7 @@ type TxRepos interface {
 	Outbox() OutboxWriter
 	Merchants() BalanceUpdater
 	Ledger() LedgerWriter
+	LedgerCheck() LedgerCheckRepo
 }
 
 // TransferWriter stores transfers and their status changes.
@@ -57,6 +58,40 @@ type BalanceUpdater interface {
 // LedgerWriter appends ledger entries.
 type LedgerWriter interface {
 	Append(ctx context.Context, e LedgerEntry) error
+}
+
+// LedgerCheckRepo reads what the ledger check verifies and stores what it finds.
+type LedgerCheckRepo interface {
+	// DueMerchants returns up to limit merchants whose balance or version differs from their checkpoint,
+	// least recently checked first. A merchant without a checkpoint counts as checked up to version 0.
+	DueMerchants(ctx context.Context, limit int) ([]MerchantID, error)
+	// LockCheckpoint returns the merchant's checkpoint, creating an empty one first if needed,
+	// and keeps it locked until the transaction ends. It returns false if another transaction holds it.
+	LockCheckpoint(ctx context.Context, merchantID MerchantID) (LedgerCheckpoint, bool, error)
+	// Balance returns the merchant's current balance and version.
+	Balance(ctx context.Context, merchantID MerchantID) (BalanceChange, error)
+	// EntriesAfter returns up to limit of the merchant's entries with a version above after and at most upTo,
+	// in version order.
+	EntriesAfter(ctx context.Context, merchantID MerchantID, after, upTo int64, limit int) ([]LedgerEntry, error)
+	// Transfers returns the transfers with the given IDs.
+	Transfers(ctx context.Context, ids []uuid.UUID) ([]Transfer, error)
+	SaveCheckpoint(ctx context.Context, cp LedgerCheckpoint) error
+	// UncheckedFinished returns up to limit SUCCESS or FAILED transfers the check hasn't looked at yet,
+	// locked so a concurrent check picks others.
+	UncheckedFinished(ctx context.Context, limit int) ([]FinishedTransfer, error)
+	MarkChecked(ctx context.Context, ids []uuid.UUID) error
+	// AddFindings stores the findings that weren't stored before and returns those, with their IDs.
+	AddFindings(ctx context.Context, fs []LedgerFinding) ([]LedgerFinding, error)
+	// HoldPayouts puts the merchants' payouts on hold and returns the ones that weren't held already.
+	HoldPayouts(ctx context.Context, merchantIDs []MerchantID) ([]MerchantID, error)
+	// OpenFindings summarizes the findings nobody has resolved, listing at most limit merchants.
+	OpenFindings(ctx context.Context, limit int) (OpenFindings, error)
+	// Resolve closes an open finding and returns its merchant.
+	// It returns ErrFindingNotFound or ErrFindingResolved if there is nothing to close.
+	Resolve(ctx context.Context, id int64, by, note string) (MerchantID, error)
+	// ReleaseHold lifts the merchant's hold if none of its findings is open
+	// and reports whether its payouts are still held.
+	ReleaseHold(ctx context.Context, merchantID MerchantID) (bool, error)
 }
 
 // TransferReader reads committed transfers.

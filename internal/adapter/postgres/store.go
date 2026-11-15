@@ -103,6 +103,9 @@ func (r txRepos) Transfers() transfer.TransferWriter { return transferWriter(r) 
 func (r txRepos) Outbox() transfer.OutboxWriter      { return outboxWriter(r) }
 func (r txRepos) Merchants() transfer.BalanceUpdater { return merchantRepo(r) }
 func (r txRepos) Ledger() transfer.LedgerWriter      { return ledgerWriter(r) }
+func (r txRepos) LedgerCheck() transfer.LedgerCheckRepo {
+	return ledgerCheckRepo(r)
+}
 
 // wrapUnavailable marks a lost or refused connection with transfer.ErrUnavailable.
 // Callers can then tell an outage from a bug.

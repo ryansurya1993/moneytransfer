@@ -61,7 +61,7 @@ starts Postgres, RabbitMQ and the services, runs the migrations, and seeds merch
 |---|---|---|
 | `haproxy` | Spreads requests over the api replicas | `18080` |
 | `api` (2 replicas) | HTTP API: validates, deducts the balance, stores the transfer | - |
-| `relay` | Publishes stored events to RabbitMQ | - |
+| `relay` | Publishes stored events to RabbitMQ, re-queues stuck transfers, checks the ledger | - |
 | `worker` | Calls the provider, records the outcome, refunds failures | - |
 | `mockprovider` | Fake bank with random delays and outcomes | - |
 | `postgres`, `rabbitmq` | Storage and broker (RabbitMQ UI: user and password `moneytransfer`) | `18672` (UI) |
@@ -210,7 +210,7 @@ problem details with a stable `code`:
 | 400 | Invalid fields, malformed JSON, missing `Idempotency-Key` |
 | 404 | Unknown transfer id |
 | 413, 415 | Body over 16 KB, not `application/json` |
-| 422 | `INSUFFICIENT_BALANCE` (nothing stored; a retry with the same key is checked again) or `IDEMPOTENCY_KEY_REUSED` |
+| 422 | `INSUFFICIENT_BALANCE` (nothing stored; a retry with the same key is checked again), `MERCHANT_PAYOUTS_HELD` (the ledger check found a mismatch; nothing stored) or `IDEMPOTENCY_KEY_REUSED` |
 | 503 | Database unreachable or too slow; retry with the same key |
 
 ### 3. Burst test
@@ -256,6 +256,7 @@ the mock provider:
 
 Other traffic on the merchant during a run (a manual transfer, a top-up, a reconciled refund) is
 fine: it shows up as other balance changes and the checks tell it apart through the ledger.
+A merchant whose payouts are on hold stops the test before it sends anything (exit code 2).
 
 A run on a laptop with 3 workers:
 
@@ -326,6 +327,18 @@ docker compose logs haproxy api worker | grep 69306aea-ab47-406d-a3bd-61fa8c0257
 The RabbitMQ UI at http://localhost:18672 shows the `transfers` queue and the `transfers.dlq`
 dead-letter queue.
 
+Open ledger findings, and closing one after looking into it (who and why are stored with it;
+the merchant's payouts resume when its last finding is closed):
+
+```bash
+docker compose exec postgres psql -U moneytransfer -c \
+  "SELECT id, merchant_id, rule, merchant_version, transfer_id, found_at FROM ledger_findings WHERE resolved_at IS NULL;"
+```
+
+```bash
+docker compose run --rm --no-deps relay relay resolve-ledger-finding <id> --by <name> --note "<what was found and done>"
+```
+
 ### 5. Run the tests
 
 | Command | What runs | Needs |
@@ -368,6 +381,7 @@ flowchart LR
     worker -->|"POST /payouts, Idempotency-Key = transfer id"| provider[mockprovider]
     worker -->|"claim, then record outcome and refund"| pg
     relay -.->|"every 30s: re-queue transfers left without an outcome"| pg
+    relay -.->|"check new ledger entries; hold a merchant's payouts on a mismatch"| pg
 ```
 
 A transfer moves through these statuses:
@@ -382,7 +396,7 @@ UNKNOWN, or PENDING/PROCESSING whose message was lost -> reconciler -> PROCESSIN
 
 | Package | Role |
 |---|---|
-| `internal/transfer` | Core: domain types, validation, submit, payout and reconcile flows, ports. Imports no database, broker or HTTP library (enforced by the linter). |
+| `internal/transfer` | Core: domain types, validation, submit, payout, reconcile and ledger-check flows, ports. Imports no database, broker or HTTP library (enforced by the linter). |
 | `internal/adapter/httpapi` | HTTP handlers, RFC 9457 errors, correlation id and access log middleware |
 | `internal/adapter/postgres` | Unit of work, repositories, outbox store |
 | `internal/adapter/rabbitmq` | Publisher with confirms, consumer, queue topology |
@@ -412,6 +426,21 @@ transfer without its message and no message without its transfer.
 Each entry stores `balance_after` and the merchant's version number, written under the row lock.
 The balance can be rebuilt from the entries, and a missing entry shows up as a gap in the
 versions.
+
+**A ledger check runs in the relay.** It looks at each merchant whose balance changed since its
+last check and reads only the new ledger entries, from a stored checkpoint, so the cost follows
+the traffic, not the age of the data. It checks that versions have no gaps, that each entry's
+balance is the previous one plus its amount, that the newest entry matches the merchant's
+balance, that each debit is exactly its transfer's amount and that a refund exists exactly when
+a transfer failed. While there is work it keeps going; once caught up it waits 30 seconds.
+A break is stored as a finding and logged as `alert=ledger_mismatch` (merchant, rule and ids,
+never amounts) until a person resolves it.
+
+**A mismatch holds the merchant's payouts.** The hold is set in the same transaction as the
+finding: new transfers get `422 MERCHANT_PAYOUTS_HELD` and nothing is stored, accepted ones wait
+as `PENDING`, ones already sent to the provider finish, and refunds and top-ups still credit.
+Resolving the merchant's last open finding lifts the hold, and waiting transfers go out on the
+next reconcile sweep. A false alarm delays payouts; it never moves money.
 
 **Idempotency is enforced by the database.**
 `UNIQUE (merchant_id, idempotency_key)` on transfers: a retry finds the original and gets it back,
@@ -528,10 +557,12 @@ provider's list of payouts.
   endpoint. The fake provider's answer to a repeated key is its stored result, which is what a
   status check returns. A real provider may differ: Stripe replays a stored 500 to a repeated
   key, so only a status read finds out what happened.
+- **Who resolved a ledger finding is free text.** Without logins anyone with Docker access can
+  type any name; in production the name comes from the login system.
 - **Alerts are log lines only.** `alert=outbox_backlog`, `alert=reconcile_exhausted`,
-  `alert=provider_unrecognized_response` and `event=transfer_unknown` are structured fields for a
-  log platform to alert on. Routing to chat or paging belongs in the monitoring platform
-  (grouping, silencing, on-call), which isn't part of this setup.
+  `alert=ledger_mismatch`, `alert=provider_unrecognized_response` and `event=transfer_unknown`
+  are structured fields for a log platform to alert on. Routing to chat or paging belongs in the
+  monitoring platform (grouping, silencing, on-call), which isn't part of this setup.
 - **No CI pipeline, no metrics endpoint.** Tests and lint run locally through `make`.
 - **Account numbers are stored in plain text** in Postgres (masked everywhere else).
 - **The mock provider's `/stats` and key store grow without bound**, which is fine for a demo.
@@ -542,7 +573,9 @@ Correctness and money
 - With a real provider, reconcile through its status endpoint (or webhooks) instead of sending
   the payout request again.
 - An ops command to resolve `UNKNOWN` transfers through the same finish-and-refund code.
-- A periodic ledger check (balance = sum of entries, versions without gaps) with a critical alert.
+- Cancel and refund transfers held longer than some days, and notify the merchant when a hold is
+  placed or lifted.
+- Close many ledger findings in one step (after a checker bug), showing what it would close first.
 - A status history table, for a permanent timeline of each transfer.
 - An idempotency-key table with expiry, once more endpoints need idempotency.
 
@@ -559,10 +592,13 @@ Scale
   against Postgres' default limit of 100. The 3-worker load test peaks at 12.
 - Outbox retention: delete published rows after some days, or partition by date and drop old
   partitions.
+- The ledger check finds merchants with new entries by comparing every merchant row with its
+  checkpoint (about 35 ms at 100,000 merchants). With many more merchants, record which merchants
+  changed when their balance changes instead.
 
 Operations
 - Metrics: transfers by status, outbox lag, dead-letter queue depth, provider latency and
-  timeouts, API latency, with alert rules.
+  timeouts, API latency, ledger check lag (oldest unchecked entry), with alert rules.
 - A circuit breaker around the provider that pauses consuming while open (never marking
   transfers `FAILED`).
 - Per-merchant rate limiting at the gateway.

@@ -283,3 +283,25 @@ func TestRefundLogLeavesOutTheBalance(t *testing.T) {
 		t.Errorf("refund log %s contains the merchant balance; the ledger holds it", line)
 	}
 }
+
+func TestProcessLeavesAHeldMerchantsPendingTransferWaiting(t *testing.T) {
+	db := newProcessDB(transfer.StatusPending)
+	db.failAt, db.failErr = "transfers.Claim", transfer.ErrPayoutsHeld
+	p := &fakeProvider{replies: []payoutReply{paid}}
+	var logs bytes.Buffer
+	proc := transfer.NewProcessor(db, p, slog.New(slog.NewJSONHandler(&logs, nil)), fastRetries)
+
+	if err := proc.Process(t.Context(), transferID); err != nil {
+		t.Fatalf("Process = %v, want nil so the message is acked", err)
+	}
+
+	if p.calls != 0 {
+		t.Errorf("provider called %d times for a held merchant", p.calls)
+	}
+	if got := db.committed.transfers[transferID].Status; got != transfer.StatusPending {
+		t.Errorf("status = %s, want PENDING", got)
+	}
+	if !strings.Contains(logs.String(), "merchant payouts on hold") {
+		t.Errorf("logs = %s, want the wait logged", logs.String())
+	}
+}

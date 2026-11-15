@@ -1,12 +1,16 @@
 CREATE TABLE merchants (
-    id         BIGINT      PRIMARY KEY,
-    name       TEXT        NOT NULL,
-    balance    BIGINT      NOT NULL,
+    id                  BIGINT      PRIMARY KEY,
+    name                TEXT        NOT NULL,
+    balance             BIGINT      NOT NULL,
     -- Change counter stamped on each ledger entry; not used for optimistic locking.
-    version    BIGINT      NOT NULL DEFAULT 0,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT merchants_balance_non_negative CHECK (balance >= 0)
+    version             BIGINT      NOT NULL DEFAULT 0,
+    -- Set while the ledger check has open findings for the merchant: no new payouts go out.
+    payouts_held_reason TEXT,
+    payouts_held_at     TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT merchants_balance_non_negative CHECK (balance >= 0),
+    CONSTRAINT merchants_payouts_hold_complete CHECK ((payouts_held_reason IS NULL) = (payouts_held_at IS NULL))
 );
 
 CREATE TABLE transfers (
@@ -32,6 +36,7 @@ CREATE TABLE transfers (
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
     processing_started_at TIMESTAMPTZ,
     completed_at          TIMESTAMPTZ,
+    ledger_checked_at     TIMESTAMPTZ,
     CONSTRAINT transfers_merchant_fk FOREIGN KEY (merchant_id) REFERENCES merchants (id),
     CONSTRAINT transfers_merchant_idempotency_key_uniq UNIQUE (merchant_id, idempotency_key),
     CONSTRAINT transfers_amount_positive CHECK (amount > 0),
@@ -42,6 +47,10 @@ CREATE TABLE transfers (
 -- For the recovery sweep.
 CREATE INDEX transfers_open_idx ON transfers (status, updated_at)
     WHERE status IN ('PENDING', 'PROCESSING', 'UNKNOWN');
+
+-- Finished transfers the ledger check hasn't looked at yet; rows leave the index once checked.
+CREATE INDEX transfers_ledger_unchecked_idx ON transfers (completed_at)
+    WHERE ledger_checked_at IS NULL AND status IN ('SUCCESS', 'FAILED');
 
 CREATE TABLE balance_entries (
     id               BIGINT      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -79,3 +88,37 @@ CREATE TABLE outbox (
 
 CREATE INDEX outbox_unsent_idx ON outbox (id) WHERE published_at IS NULL;
 CREATE INDEX outbox_transfer_id_idx ON outbox (transfer_id);
+
+-- The last ledger entry the ledger check verified per merchant; it reads only entries after it.
+CREATE TABLE ledger_checkpoints (
+    merchant_id      BIGINT      PRIMARY KEY,
+    merchant_version BIGINT      NOT NULL,
+    balance_after    BIGINT      NOT NULL,
+    checked_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ledger_checkpoints_merchant_fk FOREIGN KEY (merchant_id) REFERENCES merchants (id)
+);
+
+CREATE TABLE ledger_findings (
+    id               BIGINT      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    merchant_id      BIGINT      NOT NULL,
+    rule             TEXT        NOT NULL,
+    merchant_version BIGINT,
+    transfer_id      UUID,
+    found_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    resolved_at      TIMESTAMPTZ,
+    resolved_by      TEXT,
+    resolution_note  TEXT,
+    CONSTRAINT ledger_findings_merchant_fk FOREIGN KEY (merchant_id) REFERENCES merchants (id),
+    CONSTRAINT ledger_findings_transfer_fk FOREIGN KEY (transfer_id) REFERENCES transfers (id),
+    CONSTRAINT ledger_findings_rule_valid CHECK (rule IN (
+        'VERSION_GAP', 'BALANCE_CHAIN', 'MERCHANT_BALANCE', 'DEBIT_AMOUNT',
+        'DEBIT_MISSING', 'REFUND_AMOUNT', 'REFUND_NOT_FAILED', 'REFUND_MISSING'
+    )),
+    CONSTRAINT ledger_findings_resolution_complete CHECK (
+        (resolved_at IS NULL) = (resolved_by IS NULL) AND (resolved_at IS NULL) = (resolution_note IS NULL)
+    ),
+    -- A problem the check sees again on its next round is recorded once.
+    CONSTRAINT ledger_findings_problem_uniq UNIQUE NULLS NOT DISTINCT (merchant_id, rule, merchant_version, transfer_id)
+);
+
+CREATE INDEX ledger_findings_open_idx ON ledger_findings (merchant_id) WHERE resolved_at IS NULL;

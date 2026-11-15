@@ -52,6 +52,8 @@ func NewProcessor(uow UnitOfWork, provider Provider, logger *slog.Logger, opts P
 // Process claims the transfer, asks the provider to pay it, and records the outcome.
 // A failed payout is refunded in the same transaction that records it.
 // It returns nil if the transfer already had an outcome, and ErrNotFound if it doesn't exist.
+// It also returns nil for a PENDING transfer of a merchant whose payouts are held: the transfer waits,
+// and the reconciler sends it again once the hold is lifted.
 // If ctx ends first it returns the context's error; the transfer stays PROCESSING for a later claim.
 func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 	var t Transfer
@@ -63,6 +65,10 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 		})
 	})
 	if errors.Is(err, ErrAlreadyFinal) {
+		return nil
+	}
+	if errors.Is(err, ErrPayoutsHeld) {
+		p.logger.InfoContext(ctx, "transfer waits: merchant payouts on hold", "transfer_id", id)
 		return nil
 	}
 	if err != nil {

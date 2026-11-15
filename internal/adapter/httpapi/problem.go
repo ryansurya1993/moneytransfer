@@ -64,6 +64,18 @@ func writeBody(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// declineReason names a business decline for the log, or returns "" if err isn't one.
+func declineReason(err error) string {
+	switch {
+	case errors.Is(err, transfer.ErrInsufficientBalance):
+		return "insufficient_balance"
+	case errors.Is(err, transfer.ErrPayoutsHeld):
+		return "payouts_held"
+	default:
+		return ""
+	}
+}
+
 // writeError maps an error from the service to a response. Only the expected domain errors
 // reach the client; anything else is logged and answered with a generic 500.
 func (h *handler) writeError(w http.ResponseWriter, r *http.Request, err error) {
@@ -82,6 +94,9 @@ func (h *handler) writeError(w http.ResponseWriter, r *http.Request, err error) 
 		writeProblem(w, r, http.StatusNotFound, "TRANSFER_NOT_FOUND", "No transfer exists with this ID.")
 	case errors.Is(err, transfer.ErrInsufficientBalance):
 		writeProblem(w, r, http.StatusUnprocessableEntity, "INSUFFICIENT_BALANCE", "The merchant balance doesn't cover the amount.")
+	case errors.Is(err, transfer.ErrPayoutsHeld):
+		writeProblem(w, r, http.StatusUnprocessableEntity, "MERCHANT_PAYOUTS_HELD",
+			"Payouts for this merchant are on hold. Contact support.")
 	case errors.Is(err, transfer.ErrIdempotencyKeyReused):
 		writeProblem(w, r, http.StatusUnprocessableEntity, "IDEMPOTENCY_KEY_REUSED",
 			"This Idempotency-Key was already used with a different request.")
