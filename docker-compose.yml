@@ -93,7 +93,7 @@ services:
   haproxy:
     image: haproxy:3.4.7-alpine
     ports:
-      - "${API_PORT:-18080}:8080"
+      - "127.0.0.1:${API_PORT:-18080}:8080"
     volumes:
       - ./deploy/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     healthcheck:
@@ -118,7 +118,7 @@ services:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-moneytransfer}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-moneytransfer}
     ports:
-      - "${RABBITMQ_UI_PORT:-18672}:15672"
+      - "127.0.0.1:${RABBITMQ_UI_PORT:-18672}:15672"
     volumes:
       - rabbitmqdata:/var/lib/rabbitmq
     healthcheck:

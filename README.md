@@ -67,8 +67,9 @@ starts Postgres, RabbitMQ and the services, runs the migrations, and seeds merch
 | `postgres`, `rabbitmq` | Storage and broker (RabbitMQ UI: user and password `moneytransfer`) | `18672` (UI) |
 | `migrate`, `seed` | One-shot jobs that create the schema and the merchant | - |
 
-Ports and every other setting can be changed in a `.env` file (copy `.env.example`, which lists
-all variables with their defaults).
+Both ports listen on 127.0.0.1 only, so the unauthenticated API and the RabbitMQ UI are not
+reachable from the network. Ports and every other setting can be changed in a `.env` file (copy
+`.env.example`, which lists all variables with their defaults).
 
 ### 2. Try it by hand
 
