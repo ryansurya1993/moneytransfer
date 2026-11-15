@@ -337,7 +337,8 @@ func (c *LedgerChecker) logRecorded(ctx context.Context, added []LedgerFinding, 
 	}
 }
 
-// alertOpenFindings repeats the alert on every round while findings are open, so a lost log line isn't the end of it.
+// alertOpenFindings logs one alert if findings are open.
+// The checker calls it every 30 seconds, so a lost log line isn't the end of it.
 // It carries no amounts: those stay in the database.
 func (c *LedgerChecker) alertOpenFindings(ctx context.Context) error {
 	var open OpenFindings

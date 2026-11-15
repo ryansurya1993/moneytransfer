@@ -59,7 +59,7 @@ func (m merchantRepo) whyNoDebit(ctx context.Context, merchantID transfer.Mercha
 	return transfer.ErrInsufficientBalance
 }
 
-// Credit has no balance condition: a refund only returns money this transfer took earlier.
+// Credit has no balance condition: it only adds money, for a refund or a deposit.
 // A hold doesn't stop it either: money coming back is often what corrects the balance.
 func (m merchantRepo) Credit(ctx context.Context, merchantID transfer.MerchantID, amount transfer.Amount) (transfer.BalanceChange, error) {
 	const q = `

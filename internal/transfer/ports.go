@@ -29,7 +29,8 @@ type TransferWriter interface {
 	// It returns ErrDuplicateIdempotencyKey if the merchant already used the key.
 	Create(ctx context.Context, t *Transfer) error
 	// Claim moves a PENDING, PROCESSING or UNKNOWN transfer to PROCESSING and returns it.
-	// It returns ErrAlreadyFinal if the transfer has an outcome, and ErrNotFound if it doesn't exist.
+	// It returns ErrAlreadyFinal if the transfer has an outcome, ErrNotFound if it doesn't exist,
+	// and ErrPayoutsHeld if it is still PENDING and its merchant's payouts are on hold.
 	Claim(ctx context.Context, id uuid.UUID) (Transfer, error)
 	// Finish records the outcome of a PROCESSING transfer.
 	// It returns false, and changes nothing, if the transfer is no longer PROCESSING.
@@ -49,7 +50,7 @@ type OutboxWriter interface {
 // BalanceUpdater changes merchant balances.
 type BalanceUpdater interface {
 	// Debit atomically subtracts amount if the balance covers it and returns the new balance and version.
-	// Otherwise it returns ErrInsufficientBalance.
+	// Otherwise it returns ErrInsufficientBalance, or ErrPayoutsHeld if the merchant's payouts are on hold.
 	Debit(ctx context.Context, merchantID MerchantID, amount Amount) (BalanceChange, error)
 	// Credit adds amount and returns the new balance and version.
 	Credit(ctx context.Context, merchantID MerchantID, amount Amount) (BalanceChange, error)

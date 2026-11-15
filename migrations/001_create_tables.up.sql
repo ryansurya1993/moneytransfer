@@ -44,7 +44,7 @@ CREATE TABLE transfers (
     CONSTRAINT transfers_status_valid CHECK (status IN ('PENDING', 'PROCESSING', 'SUCCESS', 'FAILED', 'UNKNOWN'))
 );
 
--- For the recovery sweep.
+-- For the reconciler's sweep.
 CREATE INDEX transfers_open_idx ON transfers (status, updated_at)
     WHERE status IN ('PENDING', 'PROCESSING', 'UNKNOWN');
 
