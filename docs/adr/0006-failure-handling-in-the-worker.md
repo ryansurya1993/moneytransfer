@@ -1,5 +1,8 @@
 # 6. Crash on broker loss, wait on database loss, sort messages by cause
 
+In short: each kind of failure gets its own handling, so a database outage never pushes good
+messages into the dead-letter queue.
+
 ## Context
 
 Broker connections drop, the database restarts, and some messages can never succeed. Each needs a
@@ -15,8 +18,9 @@ others: a reject and a lost connection count, a nack doesn't.
   message in flight.
 - **Malformed message or unknown transfer:** rejected without requeue, straight to the dead-letter
   queue `transfers.dlq`.
-- **Unexpected error or panic:** rejected with requeue; after 5 failed deliveries
-  (`x-delivery-limit` on a quorum queue) it moves to the dead-letter queue.
+- **Unexpected error or panic:** rejected with requeue; after 6 failed deliveries
+  (the first plus 5 retries, `x-delivery-limit` on a quorum queue)
+  it moves to the dead-letter queue.
 - **Shutdown:** unfinished messages are nacked, which returns them without counting.
 
 Messages are acknowledged only after the database commit.

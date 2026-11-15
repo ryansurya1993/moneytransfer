@@ -1,5 +1,8 @@
 # 8. Keep personal data out of logs, messages and responses
 
+In short: account numbers stay in the database;
+logs, messages and responses get ids or masked values.
+
 ## Context
 
 Recipient bank details are personal data under Indonesia's Personal Data Protection Law

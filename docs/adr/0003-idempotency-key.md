@@ -1,5 +1,8 @@
 # 3. The idempotency key identifies the intended transfer
 
+In short: the same key always means the same transfer; a declined request can be tried again with
+the same key.
+
 ## Context
 
 Clients retry when an answer is lost. A retry must never create a second transfer, and a declined

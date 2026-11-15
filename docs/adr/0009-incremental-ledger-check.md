@@ -1,5 +1,8 @@
 # 9. An incremental ledger check that holds a merchant's payouts
 
+In short: a background check verifies only new records, and pauses a merchant's payouts when
+something doesn't add up.
+
 ## Context
 
 A code change can break the money rules in ways the balance alone doesn't show: a double refund

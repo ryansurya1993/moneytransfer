@@ -1,5 +1,8 @@
 # 1. Deduct the balance with one conditional UPDATE
 
+In short: checking the balance and taking the money are one database statement, so two requests
+can't both pass the check.
+
 ## Context
 
 Every transfer of a merchant deducts from one balance row. Two concurrent requests must never

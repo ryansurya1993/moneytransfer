@@ -1,5 +1,8 @@
 # 4. A ledger entry and a version for every balance change
 
+In short: every balance change is written down with a counter, so the balance can be explained and
+a missing record shows up.
+
 ## Context
 
 "Why is the balance X?" must be answerable from stored data, and a missing record must be

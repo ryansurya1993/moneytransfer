@@ -1,5 +1,8 @@
 # 5. A timeout is an unknown outcome, not a failure
 
+In short: if the bank doesn't clearly answer, the money stays held and the service asks again
+later; it never refunds on a guess.
+
 ## Context
 
 A provider timeout doesn't say whether the money left. Refunding could pay the merchant back for a

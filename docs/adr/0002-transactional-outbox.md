@@ -1,5 +1,8 @@
 # 2. Publish through a transactional outbox
 
+In short: the transfer and its message are saved together, and a separate process sends the
+message, so a stored transfer always reaches RabbitMQ.
+
 ## Context
 
 A transfer must reach the broker if and only if it was stored and the balance deducted. Writing to

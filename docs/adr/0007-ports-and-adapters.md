@@ -1,5 +1,8 @@
 # 7. Ports and adapters in an idiomatic Go layout
 
+In short: the money rules live in one package that knows nothing about the database, so they can
+be tested on their own.
+
 ## Context
 
 The money rules must be testable without a database, and each library should be replaceable
