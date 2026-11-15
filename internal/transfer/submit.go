@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -45,14 +46,23 @@ func (r SubmitRequest) validate(maxAmount Amount) error {
 	if n := len(r.AccountNumber); n < 5 || n > 20 || !isASCIIDigits(r.AccountNumber) {
 		add("account_number", "must be 5-20 digits")
 	}
-	if strings.TrimSpace(r.AccountHolderName) == "" || utf8.RuneCountInString(r.AccountHolderName) > 100 {
+	switch {
+	case strings.TrimSpace(r.AccountHolderName) == "" || utf8.RuneCountInString(r.AccountHolderName) > 100:
 		add("account_holder_name", "must be 1-100 characters and not blank")
+	case hasControl(r.AccountHolderName):
+		add("account_holder_name", noControl)
 	}
-	if utf8.RuneCountInString(r.ReferenceID) > 64 {
+	switch {
+	case utf8.RuneCountInString(r.ReferenceID) > 64:
 		add("reference_id", "must be at most 64 characters")
+	case hasControl(r.ReferenceID):
+		add("reference_id", noControl)
 	}
-	if utf8.RuneCountInString(r.Description) > 255 {
+	switch {
+	case utf8.RuneCountInString(r.Description) > 255:
 		add("description", "must be at most 255 characters")
+	case hasControl(r.Description):
+		add("description", noControl)
 	}
 	if n := utf8.RuneCountInString(r.IdempotencyKey); n < 1 || n > 255 {
 		add("idempotency_key", "must be 1-255 characters")
@@ -81,6 +91,13 @@ func (r SubmitRequest) hash() string {
 		h.Write([]byte(strconv.Itoa(len(f)) + ":" + f + ";"))
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// Postgres text can't store a zero byte, and the other control characters have no place in a bank transfer.
+const noControl = "must not contain control characters"
+
+func hasControl(s string) bool {
+	return strings.ContainsFunc(s, unicode.IsControl)
 }
 
 func isASCIIAlnum(s string) bool {

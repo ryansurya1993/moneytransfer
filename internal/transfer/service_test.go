@@ -236,6 +236,9 @@ func TestSubmitValidation(t *testing.T) {
 		{"holder name too long", func(r *transfer.SubmitRequest) { r.AccountHolderName = strings.Repeat("a", 101) }, []string{"account_holder_name"}},
 		{"reference too long", func(r *transfer.SubmitRequest) { r.ReferenceID = strings.Repeat("r", 65) }, []string{"reference_id"}},
 		{"description too long", func(r *transfer.SubmitRequest) { r.Description = strings.Repeat("d", 256) }, []string{"description"}},
+		{"zero byte in holder name", func(r *transfer.SubmitRequest) { r.AccountHolderName = "Budi\x00" }, []string{"account_holder_name"}},
+		{"control character in reference", func(r *transfer.SubmitRequest) { r.ReferenceID = "INV\x1b[31m" }, []string{"reference_id"}},
+		{"line break in description", func(r *transfer.SubmitRequest) { r.Description = "pay\nout" }, []string{"description"}},
 		{"idempotency key missing", func(r *transfer.SubmitRequest) { r.IdempotencyKey = "" }, []string{"idempotency_key"}},
 		{"idempotency key too long", func(r *transfer.SubmitRequest) { r.IdempotencyKey = strings.Repeat("k", 256) }, []string{"idempotency_key"}},
 		{"all errors at once", func(r *transfer.SubmitRequest) {
