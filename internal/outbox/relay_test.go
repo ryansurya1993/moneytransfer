@@ -14,11 +14,11 @@ import (
 )
 
 type fakeStore struct {
-	mu      sync.Mutex
-	pending []outbox.Event
-	sent    []int64
-	rounds  int
-	oldest  time.Time
+	mu        sync.Mutex
+	pending   []outbox.Event
+	sent      []int64
+	rounds    int
+	oldestAge time.Duration
 }
 
 func newFakeStore(n int) *fakeStore {
@@ -45,10 +45,10 @@ func (s *fakeStore) PublishBatch(ctx context.Context, limit int, publish func(co
 	return n, nil
 }
 
-func (s *fakeStore) Backlog(context.Context) (int, time.Time, error) {
+func (s *fakeStore) Backlog(context.Context) (int, time.Duration, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return len(s.pending), s.oldest, nil
+	return len(s.pending), s.oldestAge, nil
 }
 
 func (s *fakeStore) state() (pending, sent, rounds int) {
@@ -210,7 +210,7 @@ func TestBacklogAlert(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store := newFakeStore(1)
-			store.oldest = time.Now().Add(-tt.oldestAgo)
+			store.oldestAge = tt.oldestAgo
 			// Every publish fails, so the event stays unsent.
 			_, logs, _ := start(t, store, &fakePublisher{failFirst: 1000}, defaultOptions)
 

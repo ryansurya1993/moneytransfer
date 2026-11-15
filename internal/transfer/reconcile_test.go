@@ -100,7 +100,7 @@ func TestSweepKeepsNothingWhenAnEventFails(t *testing.T) {
 
 func TestCheckExhaustedRaisesAnAlert(t *testing.T) {
 	ids := []uuid.UUID{uuid.New(), uuid.New()}
-	finder := &fakeFinder{result: transfer.Exhausted{Count: 3, WaitingSince: time.Now().Add(-time.Hour), IDs: ids}}
+	finder := &fakeFinder{result: transfer.Exhausted{Count: 3, Waited: time.Hour, IDs: ids}}
 	var logs bytes.Buffer
 
 	if err := newReconciler(newFakeDB(0), finder, &logs).CheckExhausted(t.Context()); err != nil {

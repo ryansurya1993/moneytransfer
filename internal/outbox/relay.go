@@ -28,8 +28,8 @@ type Store interface {
 	// It marks the events publish accepted as sent and stops at the first error.
 	// It returns how many were marked, and the publish error if there was one.
 	PublishBatch(ctx context.Context, limit int, publish func(context.Context, Event) error) (int, error)
-	// Backlog returns the number of unsent events and when the oldest was created.
-	Backlog(ctx context.Context) (count int, oldest time.Time, err error)
+	// Backlog returns the number of unsent events and how long the oldest has waited, by the store's clock.
+	Backlog(ctx context.Context) (count int, oldestAge time.Duration, err error)
 }
 
 // Publisher sends an event to the broker.
@@ -122,17 +122,17 @@ func (r *Relay) checkBacklog(ctx context.Context) {
 	}
 	r.lastBacklog = time.Now()
 
-	count, oldest, err := r.store.Backlog(ctx)
+	count, age, err := r.store.Backlog(ctx)
 	if err != nil {
 		r.logger.ErrorContext(ctx, "check outbox backlog", "error", err)
 		return
 	}
-	if count > 0 && time.Since(oldest) > r.opts.AlertAge {
+	if count > 0 && age > r.opts.AlertAge {
 		r.logger.ErrorContext(ctx, "outbox events are not being published",
 			"alert", "outbox_backlog",
 			"severity", "high",
 			"unsent", count,
-			"oldest_age_seconds", int(time.Since(oldest).Seconds()),
+			"oldest_age_seconds", int(age.Seconds()),
 		)
 	}
 }

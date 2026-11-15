@@ -122,16 +122,17 @@ func (s *Store) PublishBatch(ctx context.Context, limit int, publish func(contex
 }
 
 // Backlog implements outbox.Store.
-func (s *Store) Backlog(ctx context.Context) (int, time.Time, error) {
+// The age comes from the database clock, the same clock that stamped created_at.
+func (s *Store) Backlog(ctx context.Context) (int, time.Duration, error) {
 	const q = `
-		SELECT count(*), min(created_at)
+		SELECT count(*), COALESCE(EXTRACT(EPOCH FROM now() - min(created_at)), 0)
 		FROM outbox
 		WHERE published_at IS NULL
 	`
 	var count int
-	var oldest sql.NullTime
-	if err := s.db.QueryRowContext(ctx, q).Scan(&count, &oldest); err != nil {
-		return 0, time.Time{}, fmt.Errorf("select outbox backlog: %w", wrapUnavailable(err))
+	var ageSeconds float64
+	if err := s.db.QueryRowContext(ctx, q).Scan(&count, &ageSeconds); err != nil {
+		return 0, 0, fmt.Errorf("select outbox backlog: %w", wrapUnavailable(err))
 	}
-	return count, oldest.Time, nil
+	return count, time.Duration(ageSeconds * float64(time.Second)), nil
 }

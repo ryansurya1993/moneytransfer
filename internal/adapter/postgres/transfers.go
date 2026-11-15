@@ -283,7 +283,7 @@ var _ transfer.ExhaustedFinder = (*Store)(nil)
 // Exhausted implements transfer.ExhaustedFinder.
 func (s *Store) Exhausted(ctx context.Context, olderThan time.Duration, maxAttempts, limit int) (transfer.Exhausted, error) {
 	const q = `
-		SELECT id, updated_at, count(*) OVER () AS total
+		SELECT id, EXTRACT(EPOCH FROM now() - updated_at) AS waited_seconds, count(*) OVER () AS total
 		FROM transfers t
 		WHERE status IN ('PENDING', 'PROCESSING', 'UNKNOWN')
 			AND updated_at < now() - make_interval(secs => $1)
@@ -298,9 +298,9 @@ func (s *Store) Exhausted(ctx context.Context, olderThan time.Duration, maxAttem
 		LIMIT $3
 	`
 	var rows []struct {
-		ID        uuid.UUID `db:"id"`
-		UpdatedAt time.Time `db:"updated_at"`
-		Total     int       `db:"total"`
+		ID            uuid.UUID `db:"id"`
+		WaitedSeconds float64   `db:"waited_seconds"`
+		Total         int       `db:"total"`
 	}
 	if err := s.db.SelectContext(ctx, &rows, q, olderThan.Seconds(), maxAttempts, limit); err != nil {
 		return transfer.Exhausted{}, fmt.Errorf("select transfers out of reconcile tries: %w", wrapUnavailable(err))
@@ -308,7 +308,7 @@ func (s *Store) Exhausted(ctx context.Context, olderThan time.Duration, maxAttem
 	if len(rows) == 0 {
 		return transfer.Exhausted{}, nil
 	}
-	ex := transfer.Exhausted{Count: rows[0].Total, WaitingSince: rows[0].UpdatedAt}
+	ex := transfer.Exhausted{Count: rows[0].Total, Waited: time.Duration(rows[0].WaitedSeconds * float64(time.Second))}
 	for _, r := range rows {
 		ex.IDs = append(ex.IDs, r.ID)
 	}

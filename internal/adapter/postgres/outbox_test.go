@@ -153,12 +153,12 @@ func TestBacklogReportsOldestUnsent(t *testing.T) {
 	assertBacklog(t, store, 0)
 
 	submitN(t, db, 2)
-	count, oldest, err := store.Backlog(t.Context())
+	count, age, err := store.Backlog(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count != 2 || time.Since(oldest) > time.Minute {
-		t.Errorf("Backlog = %d, oldest %v ago; want 2 and recent", count, time.Since(oldest))
+	if count != 2 || age < 0 || age > time.Minute {
+		t.Errorf("Backlog = %d, oldest %v old; want 2 and recent", count, age)
 	}
 }
 

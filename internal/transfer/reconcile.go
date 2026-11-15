@@ -19,9 +19,9 @@ type ReconcileTarget struct {
 
 // Exhausted describes open transfers the reconciler has given up on.
 type Exhausted struct {
-	Count        int
-	WaitingSince time.Time   // last change of the transfer that has waited longest
-	IDs          []uuid.UUID // oldest first, at most the limit asked for
+	Count  int
+	Waited time.Duration // since the last change of the transfer that has waited longest
+	IDs    []uuid.UUID   // oldest first, at most the limit asked for
 }
 
 // ReconcileGap is how long an open transfer must go without a change before its next reconcile try.
@@ -165,7 +165,7 @@ func (r *Reconciler) CheckExhausted(ctx context.Context) error {
 		"alert", "reconcile_exhausted",
 		"severity", "high",
 		"count", ex.Count,
-		"oldest_age_seconds", int(time.Since(ex.WaitingSince).Seconds()),
+		"oldest_age_seconds", int(ex.Waited.Seconds()),
 		"transfer_ids", ex.IDs,
 	)
 	return nil

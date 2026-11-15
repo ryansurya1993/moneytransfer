@@ -200,7 +200,7 @@ func TestExhaustedListsTransfersOutOfTries(t *testing.T) {
 	if ex.Count != 2 || len(ex.IDs) != 1 || ex.IDs[0] != ids[1] {
 		t.Errorf("got %d exhausted, ids %v; want 2, listing only the oldest %v", ex.Count, ex.IDs, ids[1])
 	}
-	if waited := time.Since(ex.WaitingSince); waited < 29*time.Minute || waited > 31*time.Minute {
+	if waited := ex.Waited; waited < 29*time.Minute || waited > 31*time.Minute {
 		t.Errorf("oldest unchanged for %v, want about 30m", waited)
 	}
 
