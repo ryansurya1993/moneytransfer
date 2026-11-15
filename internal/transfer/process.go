@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -147,6 +148,8 @@ func (p *Processor) payout(ctx context.Context, t Transfer) (Outcome, error) {
 	if len(msg) > maxLastErrorLen {
 		msg = msg[:maxLastErrorLen]
 	}
+	// Postgres rejects text that isn't valid UTF-8, and the cut above can split a character.
+	msg = strings.ToValidUTF8(msg, "")
 	return Outcome{Status: StatusUnknown, Attempts: p.opts.MaxAttempts, LastError: msg}, nil
 }
 

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -252,15 +253,29 @@ func TestProcessStopsOnShutdown(t *testing.T) {
 }
 
 func TestProcessTruncatesLongErrors(t *testing.T) {
-	db := newProcessDB(transfer.StatusPending)
-	long := payoutReply{err: errors.New(strings.Repeat("x", 2000))}
-
-	if err := newProcessor(db, &fakeProvider{replies: []payoutReply{long}}).Process(t.Context(), transferID); err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name    string
+		message string
+		wantLen int
+	}{
+		{name: "ascii", message: strings.Repeat("x", 2000), wantLen: 500},
+		// "é" is two bytes; the one that starts at byte 499 would be cut in half.
+		{name: "character at the cut", message: strings.Repeat("x", 499) + strings.Repeat("é", 10), wantLen: 499},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := newProcessDB(transfer.StatusPending)
+			long := payoutReply{err: errors.New(tt.message)}
 
-	if got := len(db.committed.outcomes[0].LastError); got != 500 {
-		t.Errorf("last error length = %d, want 500", got)
+			if err := newProcessor(db, &fakeProvider{replies: []payoutReply{long}}).Process(t.Context(), transferID); err != nil {
+				t.Fatal(err)
+			}
+
+			got := db.committed.outcomes[0].LastError
+			if len(got) != tt.wantLen || !utf8.ValidString(got) {
+				t.Errorf("last error length = %d, valid UTF-8 %v, want %d and valid", len(got), utf8.ValidString(got), tt.wantLen)
+			}
+		})
 	}
 }
 
