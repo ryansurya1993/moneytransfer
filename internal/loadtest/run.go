@@ -42,7 +42,8 @@ func Run(ctx context.Context, db *sqlx.DB, o Options) (Report, error) {
 	}
 	// Below this, almost every request would be declined, which proves little.
 	if minBalance := 10 * (o.MinAmount + o.MaxAmount) / 2; start.Balance < minBalance {
-		return Report{}, fmt.Errorf("balance %d is too low for a meaningful run (want at least %d); top up with `make topup`",
+		return Report{}, fmt.Errorf("balance %d is too low for a meaningful run (want at least %d); top up with "+
+			"`make topup` or `docker compose run --rm --build --no-deps loadtest topup 1000000000`",
 			start.Balance, minBalance)
 	}
 
