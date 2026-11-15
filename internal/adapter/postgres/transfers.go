@@ -8,14 +8,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/ryansurya1993/moneytransfer/internal/transfer"
-)
-
-const (
-	uniqueViolation       = "23505"
-	idempotencyConstraint = "transfers_merchant_idempotency_key_uniq"
 )
 
 type transferWriter txRepos
@@ -32,6 +26,7 @@ func (w transferWriter) Create(ctx context.Context, t *transfer.Transfer) error 
 			$6, $7, $8, $9, NULLIF($10, ''),
 			NULLIF($11, ''), $12, $13
 		)
+		ON CONFLICT ON CONSTRAINT transfers_merchant_idempotency_key_uniq DO NOTHING
 		RETURNING created_at, updated_at
 	`
 
@@ -40,9 +35,9 @@ func (w transferWriter) Create(ctx context.Context, t *transfer.Transfer) error 
 		t.AccountNumber, t.AccountHolderName, t.ReferenceID, t.Description, t.Status, t.CorrelationID,
 	).Scan(&t.CreatedAt, &t.UpdatedAt)
 
-	// Only this constraint means "already submitted". Any other unique violation is a real error.
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == idempotencyConstraint {
+	// A used key inserts nothing instead of failing, so replays leave no errors in the Postgres log.
+	// Only this constraint is the conflict target: any other conflict is still an error.
+	if errors.Is(err, sql.ErrNoRows) {
 		return transfer.ErrDuplicateIdempotencyKey
 	}
 	if err != nil {
