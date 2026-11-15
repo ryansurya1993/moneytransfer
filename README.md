@@ -102,12 +102,18 @@ x-correlation-id: 69306aea-ab47-406d-a3bd-61fa8c0257c6
  "reference_id":"INV-001","failure_code":null,"created_at":"...","updated_at":"..."}
 ```
 
+> [!TIP]
+> - `id` (also at the end of `location`): this transfer's id. Use it to read the transfer with
+>   `GET /transfer/<id>` and in the database queries in the [Guide](#guide).
+> - `x-correlation-id`: this request's id. Use it to find the request in the logs
+>   (see [Check it yourself](#check-it-yourself)).
+
 The api answers in a few milliseconds, with the balance already deducted. The payout runs in the
 background; the fake bank takes 0.2-2 seconds to answer (`MOCK_MIN_DELAY` and `MOCK_MAX_DELAY`
 in `.env`), so check again a moment later:
 
 ```bash
-curl localhost:18080/transfer/01a1d891-e9f2-7ee6-9809-e740d06dba54
+curl localhost:18080/transfer/<id>
 ```
 
 ```
@@ -234,6 +240,8 @@ Both ports listen on 127.0.0.1 only, so the unauthenticated API and the RabbitMQ
 reachable from the network. Ports and every other setting can be changed in a `.env` file (copy
 `.env.example`, which lists all variables with their defaults).
 
+---
+
 ### Try it by hand
 
 After the first transfer from the [Quick start](#quick-start):
@@ -244,6 +252,8 @@ After the first transfer from the [Quick start](#quick-start):
   a new transfer.
 - Send a few more: about 1 in 10 ends `FAILED` and a few end `UNKNOWN`. That is on purpose: see
   [Simulated provider errors](#simulated-provider-errors).
+
+---
 
 ### Simulated provider errors
 
@@ -304,19 +314,24 @@ always with the same provider key, so a retry never pays twice. Then:
   - The service asks the provider again by itself, with the same key: after 1 minute, then 2, 4,
     8 minutes and so on, at most an hour apart. Meanwhile the status may briefly show
     `PROCESSING`, then `SUCCESS` or `FAILED`.
-  - After 8 checks (about 3 hours) without an answer, the relay logs `alert=reconcile_exhausted`
-    every 5 minutes until a person resolves it.
+  - After 8 checks (about 3 hours) without an answer, the relay logs an alert
+    (`"alert":"reconcile_exhausted"`, with the transfer ids) every 5 minutes until a person
+    resolves it. There is no tool for that yet: see [Out of scope](#out-of-scope).
   - Settings: `RECONCILE_AFTER` (first wait) and `RECONCILE_MAX_ATTEMPTS` (number of checks).
 
 To watch this without waiting, start the stack with a short gap and fewer checks, and send a
-transfer to an account ending in `0003`; within about 5 minutes `docker compose logs relay` shows
-the alert:
+transfer to an account ending in `0003`; within about 5 minutes
+`docker compose logs relay | grep reconcile_exhausted` shows the alert:
 
 ```bash
 RECONCILE_AFTER=10s RECONCILE_MAX_ATTEMPTS=3 make up
 ```
 
 With Docker only, put the same two settings in front of `docker compose up -d --build --wait`.
+The alert also lists earlier `UNKNOWN` transfers (accounts ending in `0003` or `0004`).
+The next start without the two settings, including the burst test command, puts the defaults back.
+
+---
 
 ### Burst test
 
@@ -387,8 +402,11 @@ PASS
 ```
 
 Exit code 0 means every check passed, 1 means a check failed, 2 means the run couldn't be judged
-(setup problem, or the balance is too low). A second run needs more money: see
-[Top up or reset](#top-up-or-reset).
+(setup problem, or the balance is too low). A run leaves the balance nearly empty, so a second
+run, or a transfer sent by hand afterwards, needs more money first (`422 INSUFFICIENT_BALANCE`
+otherwise): see [Top up or reset](#top-up-or-reset).
+
+---
 
 ### Check it yourself
 
@@ -406,18 +424,26 @@ docker compose exec postgres psql -U moneytransfer -c \
   "SELECT status, count(*), sum(amount) FROM transfers GROUP BY status ORDER BY status;"
 ```
 
-A failed transfer's ledger entries, a debit and its refund:
+A failed transfer's ledger entries, a debit and its refund. To get one, send a transfer to an
+account ending in `0001` (always rejected) and use the `id` from the response:
+
+```bash
+curl -s -X POST localhost:18080/transfer \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: failed-1' \
+  -d '{"amount":150000,"currency":"IDR","bank_code":"BCA","account_number":"1234560001","account_holder_name":"Budi Santoso"}'
+```
 
 ```bash
 docker compose exec postgres psql -U moneytransfer -c \
   "SELECT type, amount, balance_after FROM balance_entries WHERE transfer_id = '<id>' ORDER BY id;"
 ```
 
-One request through every service, by the correlation id from the response header (the HAProxy
-line also names the api replica that answered):
+One request through every service, by the `x-correlation-id` from the response (the HAProxy line
+also names the api replica that answered):
 
 ```bash
-docker compose logs haproxy api worker | grep 69306aea-ab47-406d-a3bd-61fa8c0257c6
+docker compose logs haproxy api worker | grep <correlation-id>
 ```
 
 The RabbitMQ UI at http://localhost:18672 shows the `transfers` queue and the `transfers.dlq`
@@ -425,6 +451,8 @@ dead-letter queue.
 
 The ledger check, how to see it hold a merchant's payouts, and what to do when its alert fires:
 [docs/ledger-check.md](docs/ledger-check.md).
+
+---
 
 ### Run the tests
 
@@ -446,6 +474,8 @@ burst test's own checks are tested too: each must fail on deliberately damaged d
 GitHub Actions runs the same lint and every test, integration included, with the race detector
 after each push to `main` and on each pull request (`.github/workflows/ci.yml`). It is a check
 after the push, not a gate: nothing blocks a push to `main` on it.
+
+---
 
 ### Top up or reset
 
@@ -536,10 +566,11 @@ standard format (RFC 9457), with a `code` that never changes:
   status check tells what happened.
 - **Who resolved a ledger finding is free text.** Without logins anyone with Docker access can
   type any name; in production the name comes from the login system.
-- **Alerts are log lines only.** `alert=outbox_backlog`, `alert=reconcile_exhausted`,
-  `alert=ledger_mismatch`, `alert=provider_unrecognized_response` and `event=transfer_unknown`
-  are structured fields for a log platform to alert on. Routing to chat or paging belongs in the
-  monitoring platform (grouping, silencing, on-call), which isn't part of this setup.
+- **Alerts are log lines only.** `"alert":"outbox_backlog"`, `"alert":"reconcile_exhausted"`,
+  `"alert":"ledger_mismatch"`, `"alert":"provider_unrecognized_response"` and
+  `"event":"transfer_unknown"` are JSON fields for a log platform to alert on; to see them,
+  `docker compose logs relay worker | grep -E '"(alert|event)"'`. Routing to chat or paging belongs
+  in the monitoring platform (grouping, silencing, on-call), which isn't part of this setup.
 - **No metrics endpoint.** What to measure is listed under future improvements.
 - **Postgres and RabbitMQ run as single nodes.** Production needs a replicated setup: a Postgres
   primary with a standby, and 3 RabbitMQ nodes so quorum queues are actually replicated.

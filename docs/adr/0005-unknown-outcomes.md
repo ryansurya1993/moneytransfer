@@ -21,7 +21,7 @@ transfer the bank paid; retrying with a new key could pay it twice.
 - Anything still unclear ends as `UNKNOWN`, with the money held.
 - The relay's reconciler sends `UNKNOWN` transfers, and `PENDING`/`PROCESSING` ones whose message
   was lost, back to the worker: after 1 minute, then doubling up to an hour, 8 tries (about 3
-  hours). After that it logs `alert=reconcile_exhausted` every 5 minutes until a person resolves
+  hours). After that it logs `"alert":"reconcile_exhausted"` every 5 minutes until a person resolves
   them. The database clock decides what is due.
 
 ## Considered options

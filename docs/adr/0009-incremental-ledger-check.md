@@ -29,7 +29,7 @@ A broken rule is stored as a finding and holds that merchant's payouts, in the s
 - accepted transfers wait as `PENDING`;
 - transfers already at the provider finish, and refunds and top-ups still credit.
 
-The alert `alert=ledger_mismatch` names the merchant, rule and ids, never amounts. A person
+The alert `"alert":"ledger_mismatch"` names the merchant, rule and ids, never amounts. A person
 resolves each finding with a command that stores who and why; the last one lifts the hold.
 
 ## Considered options
