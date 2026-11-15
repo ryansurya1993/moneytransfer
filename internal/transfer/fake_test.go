@@ -42,6 +42,7 @@ type fakeDB struct {
 
 	due        []transfer.ReconcileTarget // what MarkForReconcile returns
 	markedWith []markArgs
+	onMark     func(call int) // runs after each MarkForReconcile call
 
 	ledgerCheck *fakeLedgerCheck // what LedgerCheck returns; it doesn't roll back
 }
@@ -204,5 +205,9 @@ func (tx *fakeTx) MarkForReconcile(_ context.Context, gap transfer.ReconcileGap,
 		return nil, err
 	}
 	tx.db.markedWith = append(tx.db.markedWith, markArgs{gap, maxAttempts, limit})
-	return tx.db.due, nil
+	due := tx.db.due
+	if tx.db.onMark != nil {
+		tx.db.onMark(len(tx.db.markedWith))
+	}
+	return due, nil
 }

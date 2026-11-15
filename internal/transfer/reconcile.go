@@ -63,28 +63,37 @@ func NewReconciler(uow UnitOfWork, finder ExhaustedFinder, logger *slog.Logger, 
 }
 
 // Run sweeps every 30 seconds and checks for transfers out of tries every 5 minutes, until ctx is canceled.
-// Failures are logged and retried on the next tick.
+// A sweep that fills its batch is followed by another right away, so a backlog after an outage drains
+// at full speed. Failures are logged and retried on the next tick.
 func (r *Reconciler) Run(ctx context.Context) error {
 	sweep := time.NewTicker(sweepInterval)
 	defer sweep.Stop()
 	check := time.NewTicker(exhaustedCheckInterval)
 	defer check.Stop()
 
-	r.sweep(ctx)
+	r.sweepAll(ctx)
 	r.checkExhausted(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-sweep.C:
-			r.sweep(ctx)
+			r.sweepAll(ctx)
 		case <-check.C:
 			r.checkExhausted(ctx)
 		}
 	}
 }
 
-func (r *Reconciler) sweep(ctx context.Context) {
+func (r *Reconciler) sweepAll(ctx context.Context) {
+	for ctx.Err() == nil {
+		if r.sweep(ctx) < sweepBatch {
+			return
+		}
+	}
+}
+
+func (r *Reconciler) sweep(ctx context.Context) int {
 	// Shutdown may cancel a sweep halfway: it is one transaction, so none of it stays.
 	ctx, cancel := context.WithTimeout(ctx, sweepInterval)
 	defer cancel()
@@ -95,6 +104,7 @@ func (r *Reconciler) sweep(ctx context.Context) {
 	case n > 0:
 		r.logger.InfoContext(ctx, "queued transfers for reconciliation", "count", n)
 	}
+	return n
 }
 
 func (r *Reconciler) checkExhausted(ctx context.Context) {

@@ -150,3 +150,32 @@ func TestCheckExhaustedReturnsTheReadError(t *testing.T) {
 		t.Errorf("CheckExhausted = %v, want ErrUnavailable", err)
 	}
 }
+
+func TestRunSweepsAgainRightAfterAFullBatch(t *testing.T) {
+	db := newFakeDB(0)
+	full := make([]transfer.ReconcileTarget, 100)
+	for i := range full {
+		full[i] = transfer.ReconcileTarget{ID: uuid.New(), Status: transfer.StatusUnknown, Attempt: 1}
+	}
+	db.due = full
+	db.onMark = func(call int) {
+		if call == 3 {
+			db.due = nil
+		}
+	}
+	// Far shorter than the 30-second tick: every sweep seen here came without waiting for it.
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+
+	if err := newReconciler(db, &fakeFinder{}, io.Discard).Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Three full batches, then one that came back short and ended the run of sweeps.
+	if got := len(db.markedWith); got != 4 {
+		t.Errorf("%d sweeps, want 4", got)
+	}
+	if got := len(db.committed.outbox); got != 300 {
+		t.Errorf("%d events queued, want 300", got)
+	}
+}
